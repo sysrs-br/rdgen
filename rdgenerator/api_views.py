@@ -11,6 +11,7 @@ VERSION_CHOICES = ['master', '1.4.9', '1.4.8', '1.4.7', '1.4.6', '1.4.5', '1.4.4
 DIRECTION_CHOICES = ['incoming', 'outgoing', 'both']
 INSTALLATION_CHOICES = ['installationY', 'installationN']
 SETTINGS_CHOICES = ['settingsY', 'settingsN']
+ACCOUNT_CHOICES = ['accountY', 'accountN']
 THEME_CHOICES = ['light', 'dark', 'system']
 THEME_DORO_CHOICES = ['default', 'override']
 PASS_APPROVE_MODE_CHOICES = ['password', 'click', 'password-click']
@@ -60,6 +61,7 @@ def validate_generate_params(data):
         'direction': (DIRECTION_CHOICES, 'both'),
         'installation': (INSTALLATION_CHOICES, 'installationY'),
         'settings': (SETTINGS_CHOICES, 'settingsY'),
+        'account': (ACCOUNT_CHOICES, 'accountY'),
         'theme': (THEME_CHOICES, 'system'),
         'themeDorO': (THEME_DORO_CHOICES, 'default'),
         'passApproveMode': (PASS_APPROVE_MODE_CHOICES, 'password-click'),
