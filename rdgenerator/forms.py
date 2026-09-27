@@ -33,8 +33,8 @@ class GenerateForm(forms.Form):
         ('settingsN', 'Yes, DISABLE settings')
     ], initial='settingsY')
     account = forms.ChoiceField(label="Disable Account/Login", choices=[
-        ('accountY', 'No, enable login/address book'),
-        ('accountN', 'Yes, DISABLE login/address book')
+        ('accountY', 'No - keep login/address book visible'),
+        ('accountN', 'Yes - HIDE login/address book')
     ], initial='accountN')
     androidappid = forms.CharField(label="Custom Android App ID (replaces 'com.carriez.flutter_hbb')", required=False)
 
