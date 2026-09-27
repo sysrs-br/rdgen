@@ -282,42 +282,76 @@ jobs:
           # endpoint (mrdesk-suporte /api/version/latest) e quem decide se ha versao nova.
           set -e
 
-          URL_MARKER='const URL: &str = "https://api.rustdesk.com/version/latest";'
-          if ! grep -qF "$URL_MARKER" ./libs/hbb_common/src/lib.rs; then
-            echo "ERRO: URL de version_check_request nao encontrada em libs/hbb_common/src/lib.rs - o RustDesk oficial pode ter mudado essa funcao. Atualize o patch em generator-windows.yml."
-            exit 1
-          fi
-          sed -i -e 's|const URL: &str = "https://api.rustdesk.com/version/latest";|const URL: \&str = "https://mrdesk.sysrs.com.br/api/version/latest";|' ./libs/hbb_common/src/lib.rs
-
-          CSU_MARKER='pub fn check_software_update() {
-    if is_custom_client() {
-        return;
-    }'
-          if ! grep -qzF "$CSU_MARKER" ./src/common.rs; then
-            echo "ERRO: guarda is_custom_client() em check_software_update() nao encontrada em src/common.rs - o RustDesk oficial pode ter mudado essa funcao. Atualize o patch em generator-windows.yml."
-            exit 1
-          fi
           python3 - <<'PYEOF'
           import pathlib
+
+          # 1) URL fixa do check -> nosso servidor
+          p = pathlib.Path("libs/hbb_common/src/lib.rs")
+          s = p.read_text()
+          target = 'const URL: &str = "https://api.rustdesk.com/version/latest";'
+          if target not in s:
+              raise SystemExit(
+                  "ERRO: URL de version_check_request nao encontrada em libs/hbb_common/src/lib.rs - "
+                  "o RustDesk oficial pode ter mudado essa funcao. Atualize o patch em generator-windows.yml."
+              )
+          s = s.replace(target, 'const URL: &str = "https://mrdesk.sysrs.com.br/api/version/latest";', 1)
+          p.write_text(s)
+          print("hbb_common/src/lib.rs patched: URL do version check aponta pro nosso servidor")
+
+          # 2) Reativa a checagem manual (desligada de proposito pra custom client)
           p = pathlib.Path("src/common.rs")
           s = p.read_text()
           target = "pub fn check_software_update() {\n    if is_custom_client() {\n        return;\n    }"
-          replacement = "pub fn check_software_update() {\n    // MrDesk custom: checagem reativada, aponta pro nosso proprio servidor."
           if target not in s:
-              raise SystemExit("ERRO: alvo nao encontrado em src/common.rs (ver step anterior)")
+              raise SystemExit(
+                  "ERRO: guarda is_custom_client() em check_software_update() nao encontrada em src/common.rs - "
+                  "o RustDesk oficial pode ter mudado essa funcao. Atualize o patch em generator-windows.yml."
+              )
+          replacement = "pub fn check_software_update() {\n    // MrDesk custom: checagem reativada, aponta pro nosso proprio servidor."
           s = s.replace(target, replacement, 1)
           p.write_text(s)
           print("common.rs patched: check_software_update() reativado para o MrDesk")
+
+          # 3) Reativa a checagem automatica diaria em segundo plano (Windows)
+          p = pathlib.Path("src/updater.rs")
+          s = p.read_text()
+          target = "let update_msi = crate::platform::is_msi_installed()? && !crate::is_custom_client();"
+          if target not in s:
+              raise SystemExit(
+                  "ERRO: linha 'update_msi' nao encontrada em src/updater.rs - "
+                  "o RustDesk oficial pode ter mudado essa funcao. Atualize o patch em generator-windows.yml."
+              )
+          replacement = "let update_msi = crate::platform::is_msi_installed()?; // MrDesk custom: checagem automatica diaria reativada"
+          s = s.replace(target, replacement, 1)
+          p.write_text(s)
+          print("updater.rs patched: checagem automatica diaria reativada para o MrDesk")
+
+          # 4) A tela principal do Flutter tem seu PROPRIO bloqueio pra esconder o card de
+          #    "nova versao disponivel" quando e um "custom client" (bind.isCustomClient())
+          #    OU quando o prefixo de URI do app (ex.: "mrdesk://") nao contem "rustdesk".
+          #    Sem tirar esse bloqueio, o card nunca aparece pro MrDesk mesmo com o
+          #    servidor respondendo certinho.
+          p = pathlib.Path("flutter/lib/desktop/pages/desktop_home_page.dart")
+          s = p.read_text()
+          target = (
+              "if (!bind.isCustomClient() &&\n"
+              "        updateUrl.isNotEmpty &&\n"
+              "        !isCardClosed &&\n"
+              "        bind.mainUriPrefixSync().contains('rustdesk')) {"
+          )
+          if target not in s:
+              raise SystemExit(
+                  "ERRO: condicao do card 'nova versao disponivel' nao encontrada em "
+                  "flutter/lib/desktop/pages/desktop_home_page.dart - o RustDesk oficial pode ter "
+                  "mudado essa tela. Atualize o patch em generator-windows.yml."
+              )
+          replacement = "if (updateUrl.isNotEmpty && !isCardClosed) { // MrDesk custom: card de update habilitado"
+          s = s.replace(target, replacement, 1)
+          p.write_text(s)
+          print("desktop_home_page.dart patched: card de nova versao habilitado para custom client")
           PYEOF
 
-          UPD_MARKER='let update_msi = crate::platform::is_msi_installed()? && !crate::is_custom_client();'
-          if ! grep -qF "$UPD_MARKER" ./src/updater.rs; then
-            echo "ERRO: linha 'update_msi' nao encontrada em src/updater.rs - o RustDesk oficial pode ter mudado essa funcao. Atualize o patch em generator-windows.yml."
-            exit 1
-          fi
-          sed -i -e 's|let update_msi = crate::platform::is_msi_installed()? \&\& !crate::is_custom_client();|let update_msi = crate::platform::is_msi_installed()?; // MrDesk custom: checagem automatica diaria reativada|' ./src/updater.rs
-
-          echo "Patches de update aplicados: URL + checagem manual (common.rs) + checagem automatica diaria (updater.rs)"
+          echo "Patches de update aplicados: URL + checagem manual (common.rs) + checagem automatica diaria (updater.rs) + card visivel no Flutter (desktop_home_page.dart)"
 
       - name: change appname to custom
         if: env.appname != 'rustdesk'
