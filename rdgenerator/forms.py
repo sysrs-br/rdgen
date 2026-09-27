@@ -85,7 +85,7 @@ class GenerateForm(forms.Form):
     hidecm = forms.BooleanField(initial=True, required=False)
     hideStopService = forms.BooleanField(label="Hide 'Stop service' (tray icon and Settings)", initial=True, required=False)
     enablePrinter = forms.BooleanField(initial=True, required=False)
-    enableCamera = forms.BooleanField(initial=True, required=False)
+    enableCamera = forms.BooleanField(initial=False, required=False)
     enableTerminal = forms.BooleanField(initial=True, required=False)
 
     #Other

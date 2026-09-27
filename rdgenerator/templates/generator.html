@@ -451,72 +451,40 @@
         const enableCamera = document.getElementById("{{ form.enableCamera.id_for_label }}");
         const enableTerminal = document.getElementById("{{ form.enableTerminal.id_for_label }}");
 
+        // Valores padrão reais de cada campo (tem que bater com forms.py).
+        // Usados pra resetar o formulário de forma previsível ao trocar de
+        // preset - antes cada bloco (full/view/custom) mexia num subconjunto
+        // diferente de campos "na mão", deixando estado grudado de um preset
+        // pro outro (ex: escolher Full e depois Custom deixava a gravação
+        // marcada, porque o bloco "custom" nunca resetava esse campo).
+        const permissionFields = {
+            enableKeyboard, enableClipboard, enableFileTransfer, enableAudio,
+            enableTCP, enableRemoteRestart, enableRecording, enableBlockingInput,
+            enableRemoteModi, enablePrinter, enableCamera, enableTerminal,
+        };
+        const permissionDefaults = {
+            enableKeyboard: true, enableClipboard: true, enableFileTransfer: true,
+            enableAudio: true, enableTCP: true, enableRemoteRestart: true,
+            enableRecording: false, enableBlockingInput: true, enableRemoteModi: false,
+            enablePrinter: true, enableCamera: false, enableTerminal: true,
+        };
+
         document.getElementById("{{ form.permissionsType.id_for_label }}").addEventListener('change', function() {
             if (this.value === 'full') {
-                enableKeyboard.checked = true;
-                enableClipboard.checked = true;
-                enableFileTransfer.checked = true;
-                enableAudio.checked = true;
-                enableTCP.checked = true;
-                enableRemoteRestart.checked = true;
-                enableRecording.checked = true;
-                enableBlockingInput.checked = true;
-                enableRemoteModi.checked = true;
-                enablePrinter.checked = true;
-                enableCamera.checked = true;
-                enableTerminal.checked = true;
-
-                enableKeyboard.disabled = true;
-                enableClipboard.disabled = true;
-                enableFileTransfer.disabled = true;
-                enableAudio.disabled = true;
-                enableTCP.disabled = true;
-                enableRemoteRestart.disabled = true;
-                enableRecording.disabled = true;
-                enableBlockingInput.disabled = true;
-                enableRemoteModi.disabled = true;
-                enablePrinter.disabled = true;
-                enableCamera.disabled = true;
-                enableTerminal.disable = true;
+                for (const key in permissionFields) {
+                    permissionFields[key].checked = true;
+                    permissionFields[key].disabled = true;
+                }
             } else if (this.value === 'view') {
-                enableKeyboard.checked = false;
-                enableClipboard.checked = false;
-                enableFileTransfer.checked = false;
-                enableAudio.checked = false;
-                enableTCP.checked = false;
-                enableRemoteRestart.checked = false;
-                enableRecording.checked = false;
-                enableBlockingInput.checked = false;
-                enableRemoteModi.checked = false;
-                enablePrinter.checked = false;
-                enableCamera.checked = false;
-                enableTerminal.checked = false;
-
-                enableKeyboard.disabled = true;
-                enableClipboard.disabled = true;
-                enableFileTransfer.disabled = true;
-                enableAudio.disabled = true;
-                enableTCP.disabled = true;
-                enableRemoteRestart.disabled = true;
-                enableRecording.disabled = true;
-                enableBlockingInput.disabled = true;
-                enableRemoteModi.disabled = true;
-                enablePrinter.disabled = true;
-                enableCamera.disabled = true;
-                enableTerminal.disable = true;
+                for (const key in permissionFields) {
+                    permissionFields[key].checked = false;
+                    permissionFields[key].disabled = true;
+                }
             } else if (this.value === 'custom') {
-                enableKeyboard.disabled = false;
-                enableClipboard.disabled = false;
-                enableFileTransfer.disabled = false;
-                enableAudio.disabled = false;
-                enableTCP.disabled = false;
-                enableRemoteRestart.disabled = false;
-                enableRecording.disabled = false;
-                enableBlockingInput.disabled = false;
-                enableRemoteModi.disabled = false;
-                enablePrinter.checked = false;
-                enableCamera.checked = false;
-                enableTerminal.checked = false;
+                for (const key in permissionFields) {
+                    permissionFields[key].checked = permissionDefaults[key];
+                    permissionFields[key].disabled = false;
+                }
             }
         });
         function previewImage(input, previewContainerId) {
