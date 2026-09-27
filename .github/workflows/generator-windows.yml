@@ -153,7 +153,48 @@ jobs:
         run: |
           sed -i -e 's|2ded7f146437a761ffe6981e2f742038f85ca68d|08a471bb8ceccdd50483c81cdfa8b81b07b14b87|' ./flutter/pubspec.lock
           sed -i -e 's|2ded7f146437a761ffe6981e2f742038f85ca68d|08a471bb8ceccdd50483c81cdfa8b81b07b14b87|' ./flutter/pubspec.yaml
-      
+
+      - name: patch common.rs to report install status in sysinfo (MrDesk custom)
+        shell: bash
+        run: |
+          python3 - <<'PYEOF'
+          import pathlib
+          p = pathlib.Path("src/common.rs")
+          s = p.read_text()
+          old = (
+              '    #[cfg(not(any(target_os = "android", target_os = "ios")))]\n'
+              '    {\n'
+              '        let username = crate::platform::get_active_username();\n'
+              '        if !username.is_empty() && (!cfg!(windows) || username != "SYSTEM") {\n'
+              '            out["username"] = json!(username);\n'
+              '        }\n'
+              '    }\n'
+              '    out\n'
+              '}'
+          )
+          new = (
+              '    #[cfg(not(any(target_os = "android", target_os = "ios")))]\n'
+              '    {\n'
+              '        let username = crate::platform::get_active_username();\n'
+              '        if !username.is_empty() && (!cfg!(windows) || username != "SYSTEM") {\n'
+              '            out["username"] = json!(username);\n'
+              '        }\n'
+              '        out["installed"] = json!(if crate::platform::is_installed() { "S" } else { "N" });\n'
+              '    }\n'
+              '    out\n'
+              '}'
+          )
+          if old not in s:
+              raise SystemExit(
+                  "ERRO: bloco esperado nao encontrado em src/common.rs - "
+                  "o RustDesk oficial pode ter mudado essa funcao (get_sysinfo). "
+                  "Atualize o patch em generator-windows.yml."
+              )
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+          print("common.rs patched: campo 'installed' adicionado ao get_sysinfo()")
+          PYEOF
+
       - name: change appname to custom
         if: env.appname != 'rustdesk'
         continue-on-error: true
