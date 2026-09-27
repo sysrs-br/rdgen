@@ -233,6 +233,44 @@ jobs:
           print("windows.rs patched: 'sc description' adicionado ao get_create_service()")
           PYEOF
 
+      - name: patch ui_cm_interface.rs to allow Elevate even when installed as service (MrDesk custom - TESTE)
+        shell: bash
+        run: |
+          python3 - <<'PYEOF'
+          import pathlib
+          p = pathlib.Path("src/ui_cm_interface.rs")
+          s = p.read_text()
+
+          # can_elevate() normalmente retorna "!is_installed()", ou seja, o botao
+          # "Elevate" da janela de Permissoes so funciona em modo portatil (nao
+          # instalado). No MrDesk (instalado como servico), isso bloqueia o
+          # unico caminho nativo do RustDesk pra alcancar janelas elevadas
+          # (como a propria tela de Configuracoes) durante uma sessao remota.
+          # Este patch faz can_elevate() sempre retornar true no Windows,
+          # independente de estar instalado - EM TESTE, a confirmar se resolve
+          # o problema de acesso as Configuracoes remotamente.
+          fn_marker = "pub fn can_elevate() -> bool {"
+          fn_idx = s.find(fn_marker)
+          if fn_idx == -1:
+              raise SystemExit(
+                  "ERRO: funcao can_elevate nao encontrada em src/ui_cm_interface.rs - "
+                  "o RustDesk oficial pode ter mudado essa funcao. Atualize o patch em generator-windows.yml."
+              )
+
+          target = "return !crate::platform::is_installed();"
+          target_idx = s.find(target, fn_idx)
+          if target_idx == -1:
+              raise SystemExit(
+                  "ERRO: linha 'return !crate::platform::is_installed();' nao encontrada dentro de can_elevate - "
+                  "o RustDesk oficial pode ter mudado essa funcao. Atualize o patch em generator-windows.yml."
+              )
+
+          insertion = "return true; // MrDesk custom: permite Elevate mesmo instalado como servico\n    "
+          s = s[:target_idx] + insertion + s[target_idx + len(target):]
+          p.write_text(s)
+          print("ui_cm_interface.rs patched: can_elevate() sempre retorna true no Windows")
+          PYEOF
+
       - name: change appname to custom
         if: env.appname != 'rustdesk'
         continue-on-error: true
