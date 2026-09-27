@@ -181,7 +181,7 @@ def generate_custom_client(params, full_url):
         decodedCustom['default-settings']['enable-block-input'] = 'Y' if enableBlockingInput else 'N'
         decodedCustom['default-settings']['allow-remote-config-modification'] = 'Y' if enableRemoteModi else 'N'
         decodedCustom['default-settings']['direct-server'] = 'Y' if enableDirectIP else 'N'
-        decodedCustom['default-settings']['verification-method'] = 'use-permanent-password' if hidecm else 'use-both-passwords'
+        decodedCustom['default-settings']['verification-method'] = 'use-both-passwords'
         decodedCustom['default-settings']['approve-mode'] = passApproveMode
         decodedCustom['default-settings']['allow-hide-cm'] = 'Y' if hidecm else 'N'
         decodedCustom['default-settings']['allow-remove-wallpaper'] = 'Y' if removeWallpaper else 'N'
@@ -202,7 +202,7 @@ def generate_custom_client(params, full_url):
         decodedCustom['override-settings']['enable-block-input'] = 'Y' if enableBlockingInput else 'N'
         decodedCustom['override-settings']['allow-remote-config-modification'] = 'Y' if enableRemoteModi else 'N'
         decodedCustom['override-settings']['direct-server'] = 'Y' if enableDirectIP else 'N'
-        decodedCustom['override-settings']['verification-method'] = 'use-permanent-password' if hidecm else 'use-both-passwords'
+        decodedCustom['override-settings']['verification-method'] = 'use-both-passwords'
         decodedCustom['override-settings']['approve-mode'] = passApproveMode
         decodedCustom['override-settings']['allow-hide-cm'] = 'Y' if hidecm else 'N'
         decodedCustom['override-settings']['allow-remove-wallpaper'] = 'Y' if removeWallpaper else 'N'
