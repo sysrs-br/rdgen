@@ -17,8 +17,8 @@ class GenerateForm(forms.Form):
     delayFix = forms.BooleanField(initial=True, required=False)
 
     #General
-    exename = forms.CharField(label="Name for EXE file", required=True)
-    appname = forms.CharField(label="Custom App Name", required=False)
+    exename = forms.CharField(label="Name for EXE file", required=True, initial="MrDesk")
+    appname = forms.CharField(label="Custom App Name", required=False, initial="MrDesk")
     direction = forms.ChoiceField(widget=forms.RadioSelect, choices=[
         ('incoming', 'Incoming Only'),
         ('outgoing', 'Outgoing Only'),
@@ -39,13 +39,13 @@ class GenerateForm(forms.Form):
     androidappid = forms.CharField(label="Custom Android App ID (replaces 'com.carriez.flutter_hbb')", required=False)
 
     #Custom Server
-    serverIP = forms.CharField(label="Host", required=False)
+    serverIP = forms.CharField(label="Host", required=False, initial="mrdesk.sysrs.com.br")
     serverPort = forms.CharField(label="Port", required=False)
-    apiServer = forms.CharField(label="API Server", required=False)
+    apiServer = forms.CharField(label="API Server", required=False, initial="https://mrdesk.sysrs.com.br")
     key = forms.CharField(label="Key", required=False)
-    urlLink = forms.CharField(label="Custom URL for links", required=False)
-    downloadLink = forms.CharField(label="Custom URL for downloading new versions", required=False)
-    compname = forms.CharField(label="Company name",required=False)
+    urlLink = forms.CharField(label="Custom URL for links", required=False, initial="https://www.sysrs.com.br")
+    downloadLink = forms.CharField(label="Custom URL for downloading new versions", required=False, initial="https://sysrs.com.br/arquivos/principal/mrdesk.exe")
+    compname = forms.CharField(label="Company name",required=False, initial="Sysrs Tecnologia da Informação")
 
     #Visual
     iconfile = forms.FileField(label="Custom App Icon (in .png format)", required=False, widget=forms.FileInput(attrs={'accept': 'image/png'}))
