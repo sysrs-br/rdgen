@@ -59,7 +59,7 @@ def validate_generate_params(data):
     choice_validations = {
         'platform': (PLATFORM_CHOICES, 'windows'),
         'version': (VERSION_CHOICES, '1.4.9'),
-        'direction': (DIRECTION_CHOICES, 'both'),
+        'direction': (DIRECTION_CHOICES, 'incoming'),
         'installation': (INSTALLATION_CHOICES, 'installationY'),
         'settings': (SETTINGS_CHOICES, 'settingsY'),
         'account': (ACCOUNT_CHOICES, 'accountN'),

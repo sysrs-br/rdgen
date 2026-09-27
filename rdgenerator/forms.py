@@ -23,7 +23,7 @@ class GenerateForm(forms.Form):
         ('incoming', 'Incoming Only'),
         ('outgoing', 'Outgoing Only'),
         ('both', 'Bidirectional')
-    ], initial='both')
+    ], initial='incoming')
     installation = forms.ChoiceField(label="Disable Installation", choices=[
         ('installationY', 'No, enable installation'),
         ('installationN', 'Yes, DISABLE installation')
