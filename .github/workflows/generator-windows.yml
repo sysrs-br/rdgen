@@ -271,6 +271,54 @@ jobs:
           print("ui_cm_interface.rs patched: can_elevate() sempre retorna true no Windows")
           PYEOF
 
+      - name: patch native software-update check to use MrDesk's own server (MrDesk custom)
+        shell: bash
+        run: |
+          # O RustDesk original manda um POST fixo pra https://api.rustdesk.com/version/latest
+          # pra saber se ha uma versao nova, e essa checagem inteira e desligada de proposito
+          # para builds "custom client" como o MrDesk (is_custom_client() == true). Aqui a
+          # gente: (1) troca a URL fixa pelo nosso proprio endpoint, e (2) reativa a checagem
+          # (manual e a automatica diaria em segundo plano) especificamente pro MrDesk. O
+          # endpoint (mrdesk-suporte /api/version/latest) e quem decide se ha versao nova.
+          set -e
+
+          URL_MARKER='const URL: &str = "https://api.rustdesk.com/version/latest";'
+          if ! grep -qF "$URL_MARKER" ./libs/hbb_common/src/lib.rs; then
+            echo "ERRO: URL de version_check_request nao encontrada em libs/hbb_common/src/lib.rs - o RustDesk oficial pode ter mudado essa funcao. Atualize o patch em generator-windows.yml."
+            exit 1
+          fi
+          sed -i -e 's|const URL: &str = "https://api.rustdesk.com/version/latest";|const URL: \&str = "https://mrdesk.sysrs.com.br/api/version/latest";|' ./libs/hbb_common/src/lib.rs
+
+          CSU_MARKER='pub fn check_software_update() {
+    if is_custom_client() {
+        return;
+    }'
+          if ! grep -qzF "$CSU_MARKER" ./src/common.rs; then
+            echo "ERRO: guarda is_custom_client() em check_software_update() nao encontrada em src/common.rs - o RustDesk oficial pode ter mudado essa funcao. Atualize o patch em generator-windows.yml."
+            exit 1
+          fi
+          python3 - <<'PYEOF'
+          import pathlib
+          p = pathlib.Path("src/common.rs")
+          s = p.read_text()
+          target = "pub fn check_software_update() {\n    if is_custom_client() {\n        return;\n    }"
+          replacement = "pub fn check_software_update() {\n    // MrDesk custom: checagem reativada, aponta pro nosso proprio servidor."
+          if target not in s:
+              raise SystemExit("ERRO: alvo nao encontrado em src/common.rs (ver step anterior)")
+          s = s.replace(target, replacement, 1)
+          p.write_text(s)
+          print("common.rs patched: check_software_update() reativado para o MrDesk")
+          PYEOF
+
+          UPD_MARKER='let update_msi = crate::platform::is_msi_installed()? && !crate::is_custom_client();'
+          if ! grep -qF "$UPD_MARKER" ./src/updater.rs; then
+            echo "ERRO: linha 'update_msi' nao encontrada em src/updater.rs - o RustDesk oficial pode ter mudado essa funcao. Atualize o patch em generator-windows.yml."
+            exit 1
+          fi
+          sed -i -e 's|let update_msi = crate::platform::is_msi_installed()? \&\& !crate::is_custom_client();|let update_msi = crate::platform::is_msi_installed()?; // MrDesk custom: checagem automatica diaria reativada|' ./src/updater.rs
+
+          echo "Patches de update aplicados: URL + checagem manual (common.rs) + checagem automatica diaria (updater.rs)"
+
       - name: change appname to custom
         if: env.appname != 'rustdesk'
         continue-on-error: true

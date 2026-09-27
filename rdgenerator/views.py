@@ -183,6 +183,10 @@ def generate_custom_client(params, full_url):
         decodedCustom['default-settings']['direct-server'] = 'Y' if enableDirectIP else 'N'
         decodedCustom['default-settings']['verification-method'] = 'use-both-passwords'
         decodedCustom['default-settings']['approve-mode'] = passApproveMode
+        # Habilita a checagem automatica diaria de atualizacao em segundo plano
+        # (junto com o patch em generator-windows.yml que aponta essa checagem
+        # pro nosso proprio servidor em vez do api.rustdesk.com).
+        decodedCustom['default-settings']['allow-auto-update'] = 'Y'
         decodedCustom['default-settings']['allow-hide-cm'] = 'Y' if hidecm else 'N'
         decodedCustom['default-settings']['allow-remove-wallpaper'] = 'Y' if removeWallpaper else 'N'
         decodedCustom['default-settings']['enable-remote-printer'] = 'Y' if enablePrinter else 'N'
@@ -204,6 +208,10 @@ def generate_custom_client(params, full_url):
         decodedCustom['override-settings']['direct-server'] = 'Y' if enableDirectIP else 'N'
         decodedCustom['override-settings']['verification-method'] = 'use-both-passwords'
         decodedCustom['override-settings']['approve-mode'] = passApproveMode
+        # Habilita a checagem automatica diaria de atualizacao em segundo plano
+        # (junto com o patch em generator-windows.yml que aponta essa checagem
+        # pro nosso proprio servidor em vez do api.rustdesk.com).
+        decodedCustom['override-settings']['allow-auto-update'] = 'Y'
         decodedCustom['override-settings']['allow-hide-cm'] = 'Y' if hidecm else 'N'
         decodedCustom['override-settings']['allow-remove-wallpaper'] = 'Y' if removeWallpaper else 'N'
         decodedCustom['override-settings']['enable-remote-printer'] = 'Y' if enablePrinter else 'N'
