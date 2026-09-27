@@ -62,7 +62,7 @@ def validate_generate_params(data):
         'direction': (DIRECTION_CHOICES, 'both'),
         'installation': (INSTALLATION_CHOICES, 'installationY'),
         'settings': (SETTINGS_CHOICES, 'settingsY'),
-        'account': (ACCOUNT_CHOICES, 'accountY'),
+        'account': (ACCOUNT_CHOICES, 'accountN'),
         'theme': (THEME_CHOICES, 'system'),
         'themeDorO': (THEME_DORO_CHOICES, 'default'),
         'passApproveMode': (PASS_APPROVE_MODE_CHOICES, 'password-click'),
