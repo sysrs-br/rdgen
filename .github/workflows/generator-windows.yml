@@ -195,6 +195,44 @@ jobs:
           print("common.rs patched: campo 'installed' adicionado ao get_sysinfo()")
           PYEOF
 
+      - name: patch windows.rs to set service description (MrDesk custom)
+        shell: bash
+        run: |
+          python3 - <<'PYEOF'
+          import pathlib
+          p = pathlib.Path("src/platform/windows.rs")
+          s = p.read_text()
+
+          # Localiza pela funcao (nao pelo bloco inteiro, que tem escaping
+          # aninhado demais pra manter em um literal old/new) e insere a
+          # linha "sc description" logo antes do "sc start" que pertence a
+          # essa funcao especificamente (ha outro "sc start {app_name}" em
+          # get_import_config, mais acima no arquivo).
+          fn_marker = "fn get_create_service(exe: &str) -> String {"
+          fn_idx = s.find(fn_marker)
+          if fn_idx == -1:
+              raise SystemExit(
+                  "ERRO: funcao get_create_service nao encontrada em src/platform/windows.rs - "
+                  "o RustDesk oficial pode ter mudado essa funcao. Atualize o patch em generator-windows.yml."
+              )
+
+          target = "sc start {app_name}"
+          target_idx = s.find(target, fn_idx)
+          if target_idx == -1:
+              raise SystemExit(
+                  "ERRO: linha 'sc start {app_name}' nao encontrada dentro de get_create_service - "
+                  "o RustDesk oficial pode ter mudado essa funcao. Atualize o patch em generator-windows.yml."
+              )
+
+          insertion = (
+              'sc description {app_name} \\"Suporte remoto Sysrs para atualizacao do Sistema '
+              'de Gestao Empresarial MR1/MRE\\"\n'
+          )
+          s = s[:target_idx] + insertion + s[target_idx:]
+          p.write_text(s)
+          print("windows.rs patched: 'sc description' adicionado ao get_create_service()")
+          PYEOF
+
       - name: change appname to custom
         if: env.appname != 'rustdesk'
         continue-on-error: true
