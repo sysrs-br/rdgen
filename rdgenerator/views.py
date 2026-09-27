@@ -90,6 +90,7 @@ def generate_custom_client(params, full_url):
     enableRecording = params.get('enableRecording', True)
     enableBlockingInput = params.get('enableBlockingInput', True)
     enableRemoteModi = params.get('enableRemoteModi', False)
+    hideStopService = params.get('hideStopService', True)
     removeWallpaper = params.get('removeWallpaper', True)
     defaultManual = params.get('defaultManual', '')
     overrideManual = params.get('overrideManual', '')
@@ -187,7 +188,7 @@ def generate_custom_client(params, full_url):
         decodedCustom['default-settings']['enable-remote-printer'] = 'Y' if enablePrinter else 'N'
         decodedCustom['default-settings']['enable-camera'] = 'Y' if enableCamera else 'N'
         decodedCustom['default-settings']['enable-terminal'] = 'Y' if enableTerminal else 'N'
-        
+        decodedCustom['default-settings']['hide-stop-service'] = 'Y' if hideStopService else 'N'
 
     else:
         decodedCustom['override-settings']['access-mode'] = permissionsType
@@ -208,6 +209,7 @@ def generate_custom_client(params, full_url):
         decodedCustom['override-settings']['enable-remote-printer'] = 'Y' if enablePrinter else 'N'
         decodedCustom['override-settings']['enable-camera'] = 'Y' if enableCamera else 'N'
         decodedCustom['override-settings']['enable-terminal'] = 'Y' if enableTerminal else 'N'
+        decodedCustom['override-settings']['hide-stop-service'] = 'Y' if hideStopService else 'N'
         if direction == 'incoming':
             decodedCustom['override-settings']['custom-rendezvous-server'] = server
             decodedCustom['override-settings']['api-server'] = apiServer

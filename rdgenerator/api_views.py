@@ -25,6 +25,7 @@ BOOL_FIELDS = [
     'enableKeyboard', 'enableClipboard', 'enableFileTransfer', 'enableAudio',
     'enableTCP', 'enableRemoteRestart', 'enableRecording', 'enableBlockingInput',
     'enableRemoteModi', 'removeWallpaper', 'enablePrinter', 'enableCamera', 'enableTerminal',
+    'hideStopService',
 ]
 
 # Optional string fields (no validation needed, just accept as-is)
