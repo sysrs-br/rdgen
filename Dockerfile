@@ -1,11 +1,12 @@
 FROM python:3.13-alpine
 
 RUN adduser -D user
+RUN mkdir -p /opt/rdgen && chown user:user /opt/rdgen
 USER user
 
 WORKDIR /opt/rdgen
 
-COPY . .
+COPY --chown=user:user . .
 RUN pip install --no-cache-dir -r requirements.txt \
  && python manage.py migrate
 
