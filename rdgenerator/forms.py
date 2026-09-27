@@ -76,7 +76,7 @@ class GenerateForm(forms.Form):
     enableKeyboard =  forms.BooleanField(initial=True, required=False)
     enableClipboard = forms.BooleanField(initial=True, required=False)
     enableFileTransfer = forms.BooleanField(initial=True, required=False)
-    enableAudio = forms.BooleanField(initial=True, required=False)
+    enableAudio = forms.BooleanField(initial=False, required=False)
     enableTCP = forms.BooleanField(initial=True, required=False)
     enableRemoteRestart = forms.BooleanField(initial=True, required=False)
     enableRecording = forms.BooleanField(initial=False, required=False)
