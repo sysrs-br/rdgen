@@ -16,4 +16,6 @@ EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD wget --spider 0.0.0.0:8000
 
-CMD ["/home/user/.local/bin/gunicorn", "-c", "gunicorn.conf.py", "rdgen.wsgi:application"]
+# MrDesk custom: aplica as migrations ao iniciar (o banco pode estar num volume
+# montado, que nao existe na hora do build) e depois sobe o gunicorn.
+CMD ["sh", "-c", "python manage.py migrate --noinput && exec /home/user/.local/bin/gunicorn -c gunicorn.conf.py rdgen.wsgi:application"]

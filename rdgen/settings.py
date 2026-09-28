@@ -90,7 +90,9 @@ WSGI_APPLICATION = 'rdgen.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        # MrDesk custom: caminho do banco configuravel (DB_PATH), pra ele ficar
+        # num volume do Docker e sobreviver a recriacao do container.
+        'NAME': os.environ.get('DB_PATH') or (BASE_DIR / 'db.sqlite3'),
     }
 }
 
