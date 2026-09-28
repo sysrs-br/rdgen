@@ -349,9 +349,36 @@ jobs:
           s = s.replace(target, replacement, 1)
           p.write_text(s)
           print("desktop_home_page.dart patched: card de nova versao habilitado para custom client")
+
+          # 5) Na inicializacao da interface, checkUpdate() (flutter/lib/common.dart) so
+          #    registra o evento que preenche stateGlobal.updateUrl, e so pede a checagem
+          #    ao Rust, quando NAO e custom client. Sem tirar essa trava, a tela nunca
+          #    pergunta nada ao servidor e o card do item 4 fica sempre vazio (a checagem
+          #    que aparece no log vem so do atualizador em segundo plano do servico).
+          p = pathlib.Path("flutter/lib/common.dart")
+          s = p.read_text()
+          target = (
+              "void checkUpdate() {\n"
+              "  if (!isWeb) {\n"
+              "    if (!bind.isCustomClient()) {"
+          )
+          if target not in s:
+              raise SystemExit(
+                  "ERRO: trava isCustomClient() em checkUpdate() nao encontrada em "
+                  "flutter/lib/common.dart - o RustDesk oficial pode ter mudado essa funcao. "
+                  "Atualize o patch em generator-windows.yml."
+              )
+          replacement = (
+              "void checkUpdate() {\n"
+              "  if (!isWeb) {\n"
+              "    if (true) { // MrDesk custom: checagem de update na interface habilitada"
+          )
+          s = s.replace(target, replacement, 1)
+          p.write_text(s)
+          print("common.dart patched: checkUpdate() da interface habilitado para custom client")
           PYEOF
 
-          echo "Patches de update aplicados: URL + checagem manual (common.rs) + checagem automatica diaria (updater.rs) + card visivel no Flutter (desktop_home_page.dart)"
+          echo "Patches de update aplicados: URL + checagem manual (common.rs) + checagem automatica diaria (updater.rs) + card visivel no Flutter (desktop_home_page.dart) + checagem na interface (common.dart)"
 
       - name: change appname to custom
         if: env.appname != 'rustdesk'
