@@ -78,6 +78,9 @@ def generate_custom_client(params, full_url):
     # O Connection Type, o App Name e o link de update sao forcados de acordo com o nome,
     # pra nunca sair um MrDeskPro que baixa o mrdesk.exe (ou vice-versa).
     mrdesk_profile = MRDESK_PROFILES.get(filename.strip().lower())
+    # Atualizacao silenciosa: so no MrDesk dos clientes. No MrDeskPro (tecnico)
+    # fica so o aviso na tela, e o tecnico escolhe quando atualizar.
+    auto_update = 'N' if filename.strip().lower() == 'mrdeskpro' else 'Y'
     if mrdesk_profile:
         direction = mrdesk_profile
         appname = filename.strip()
@@ -203,7 +206,7 @@ def generate_custom_client(params, full_url):
         # Habilita a checagem automatica diaria de atualizacao em segundo plano
         # (junto com o patch em generator-windows.yml que aponta essa checagem
         # pro nosso proprio servidor em vez do api.rustdesk.com).
-        decodedCustom['default-settings']['allow-auto-update'] = 'Y'
+        decodedCustom['default-settings']['allow-auto-update'] = auto_update
         decodedCustom['default-settings']['allow-hide-cm'] = 'Y' if hidecm else 'N'
         decodedCustom['default-settings']['allow-remove-wallpaper'] = 'Y' if removeWallpaper else 'N'
         decodedCustom['default-settings']['enable-remote-printer'] = 'Y' if enablePrinter else 'N'
@@ -228,7 +231,7 @@ def generate_custom_client(params, full_url):
         # Habilita a checagem automatica diaria de atualizacao em segundo plano
         # (junto com o patch em generator-windows.yml que aponta essa checagem
         # pro nosso proprio servidor em vez do api.rustdesk.com).
-        decodedCustom['override-settings']['allow-auto-update'] = 'Y'
+        decodedCustom['override-settings']['allow-auto-update'] = auto_update
         decodedCustom['override-settings']['allow-hide-cm'] = 'Y' if hidecm else 'N'
         decodedCustom['override-settings']['allow-remove-wallpaper'] = 'Y' if removeWallpaper else 'N'
         decodedCustom['override-settings']['enable-remote-printer'] = 'Y' if enablePrinter else 'N'
