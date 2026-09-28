@@ -428,6 +428,21 @@
             previewImage(event.target, 'privacy-preview');
         });
 
+        // MrDesk custom: o nome do EXE define o Connection Type e o link de update
+        // (o servidor tambem forca isso ao gerar; aqui e so pra mostrar na tela).
+        const mrdeskProfiles = { "mrdesk": "incoming", "mrdeskpro": "both" };
+        function applyMrdeskProfile() {
+            const name = document.getElementById("{{ form.exename.id_for_label }}").value.trim().toLowerCase();
+            const direction = mrdeskProfiles[name];
+            if (!direction) return;
+            const radio = document.querySelector('input[name="direction"][value="' + direction + '"]');
+            if (radio) radio.checked = true;
+            document.getElementById("{{ form.downloadLink.id_for_label }}").value =
+                "https://www.sysrs.com.br/downloads/" + name + ".exe";
+        }
+        document.getElementById("{{ form.exename.id_for_label }}").addEventListener('input', applyMrdeskProfile);
+        applyMrdeskProfile();
+
         document.getElementById("{{ form.hidecm.id_for_label }}").addEventListener('change',function() {
             if (this.checked) {
                 document.getElementById("passwordRequirement").style.display = 'block';
@@ -708,6 +723,7 @@
                                 }
                             }
                             showLoadWarnings(skippedKeys);
+                            applyMrdeskProfile();
                         } catch (error) {
                             alert("Error loading data. Invalid JSON file.");
                         }

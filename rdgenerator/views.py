@@ -18,6 +18,15 @@ from .models import GithubRun
 from PIL import Image
 from urllib.parse import quote
 
+# MrDesk custom: nome do EXE (minusculo) -> Connection Type obrigatorio.
+# mrdesk    = client dos clientes (so recebe conexao)
+# mrdeskpro = client do tecnico (acessa e recebe)
+MRDESK_PROFILES = {
+    "mrdesk": "incoming",
+    "mrdeskpro": "both",
+}
+MRDESK_DOWNLOAD_BASE = "https://www.sysrs.com.br/downloads/"
+
 
 def generate_custom_client(params, full_url):
     """
@@ -65,6 +74,13 @@ def generate_custom_client(params, full_url):
     if not appname:
         appname = "rustdesk"
     filename = params.get('exename', 'rustdesk')
+    # MrDesk custom: os dois builds oficiais se definem pelo nome do EXE.
+    # O Connection Type e o link de update sao forcados de acordo com o nome,
+    # pra nunca sair um MrDeskPro que baixa o mrdesk.exe (ou vice-versa).
+    mrdesk_profile = MRDESK_PROFILES.get(filename.strip().lower())
+    if mrdesk_profile:
+        direction = mrdesk_profile
+        downloadLink = MRDESK_DOWNLOAD_BASE + filename.strip().lower() + ".exe"
     compname = params.get('compname', '')
     if not compname:
         compname = "Purslane Ltd"
