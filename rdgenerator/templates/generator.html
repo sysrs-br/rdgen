@@ -438,7 +438,7 @@
             const radio = document.querySelector('input[name="direction"][value="' + direction + '"]');
             if (radio) radio.checked = true;
             document.getElementById("{{ form.downloadLink.id_for_label }}").value =
-                "https://www.sysrs.com.br/downloads/" + name + ".exe";
+                "https://mrdesk.sysrs.com.br/updates/" + name + ".exe";
             document.getElementById("{{ form.appname.id_for_label }}").value =
                 document.getElementById("{{ form.exename.id_for_label }}").value.trim();
         }

@@ -25,7 +25,8 @@ MRDESK_PROFILES = {
     "mrdesk": "incoming",
     "mrdeskpro": "both",
 }
-MRDESK_DOWNLOAD_BASE = "https://www.sysrs.com.br/downloads/"
+# Exes de atualizacao servidos pela VM Oracle (Nginx, /opt/mrdesk-suporte/updates/).
+MRDESK_DOWNLOAD_BASE = "https://mrdesk.sysrs.com.br/updates/"
 
 
 def generate_custom_client(params, full_url):

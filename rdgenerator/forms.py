@@ -49,7 +49,7 @@ class GenerateForm(forms.Form):
     apiServer = forms.CharField(label="API Server", required=False, initial="https://mrdesk.sysrs.com.br")
     key = forms.CharField(label="Key", required=False)
     urlLink = forms.CharField(label="Custom URL for links", required=False, initial="https://www.sysrs.com.br")
-    downloadLink = forms.CharField(label="Custom URL for downloading new versions", required=False, initial="https://www.sysrs.com.br/downloads/mrdesk.exe")
+    downloadLink = forms.CharField(label="Custom URL for downloading new versions", required=False, initial="https://mrdesk.sysrs.com.br/updates/mrdesk.exe")
     compname = forms.CharField(label="Company name",required=False, initial="Sysrs Tecnologia da Informação")
 
     #Visual
