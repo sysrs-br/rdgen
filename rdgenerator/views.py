@@ -75,11 +75,12 @@ def generate_custom_client(params, full_url):
         appname = "rustdesk"
     filename = params.get('exename', 'rustdesk')
     # MrDesk custom: os dois builds oficiais se definem pelo nome do EXE.
-    # O Connection Type e o link de update sao forcados de acordo com o nome,
+    # O Connection Type, o App Name e o link de update sao forcados de acordo com o nome,
     # pra nunca sair um MrDeskPro que baixa o mrdesk.exe (ou vice-versa).
     mrdesk_profile = MRDESK_PROFILES.get(filename.strip().lower())
     if mrdesk_profile:
         direction = mrdesk_profile
+        appname = filename.strip()
         downloadLink = MRDESK_DOWNLOAD_BASE + filename.strip().lower() + ".exe"
     compname = params.get('compname', '')
     if not compname:

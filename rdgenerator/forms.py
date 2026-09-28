@@ -17,7 +17,12 @@ class GenerateForm(forms.Form):
     delayFix = forms.BooleanField(initial=True, required=False)
 
     #General
-    exename = forms.CharField(label="Name for EXE file", required=True, initial="MrDesk")
+    # MrDesk custom: so os dois builds oficiais. O nome define Connection Type,
+    # App Name e link de update (ver MRDESK_PROFILES em views.py).
+    exename = forms.ChoiceField(label="Name for EXE file", choices=[
+        ('MrDesk', 'MrDesk (clientes - so recebe conexao)'),
+        ('MrDeskPro', 'MrDeskPro (tecnico - acessa e recebe)'),
+    ], initial='MrDesk')
     appname = forms.CharField(label="Custom App Name", required=False, initial="MrDesk")
     direction = forms.ChoiceField(widget=forms.RadioSelect, choices=[
         ('incoming', 'Incoming Only'),
