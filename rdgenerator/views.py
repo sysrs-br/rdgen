@@ -179,6 +179,10 @@ def generate_custom_client(params, full_url):
         decodedCustom['disable-settings'] = 'Y'
     if account == "accountN":
         decodedCustom['disable-account'] = 'Y'
+    # MrDesk custom: ninguem troca o ID (nem cliente nem tecnico). O painel e a
+    # lista de tecnicos autorizados dependem do ID; tira o botao "Change ID".
+    if mrdesk_profile:
+        decodedCustom['disable-change-id'] = 'Y'
     if appname.upper != "rustdesk".upper and appname != "":
         decodedCustom['app-name'] = appname
     decodedCustom['override-settings'] = {}
