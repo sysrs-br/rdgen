@@ -82,6 +82,12 @@ def generate_custom_client(params, full_url):
     # Atualizacao silenciosa: so no MrDesk dos clientes. No MrDeskPro (tecnico)
     # fica so o aviso na tela, e o tecnico escolhe quando atualizar.
     auto_update = 'N' if filename.strip().lower() == 'mrdeskpro' else 'Y'
+    # Windows 32 bits: usa a interface antiga (Sciter) e NAO tem os nossos patches
+    # de atualizacao; alem disso o link de update aponta pro exe de 64 bits.
+    # Entao sem atualizacao automatica e sem aviso de versao nova: atualiza a mao.
+    if platform == 'windows-x86':
+        auto_update = 'N'
+        removeNewVersionNotif = True
     if mrdesk_profile:
         direction = mrdesk_profile
         appname = filename.strip()
@@ -112,6 +118,10 @@ def generate_custom_client(params, full_url):
     enableBlockingInput = params.get('enableBlockingInput', True)
     enableRemoteModi = params.get('enableRemoteModi', False)
     hideStopService = params.get('hideStopService', True)
+    # MrDesk custom: "Parar servico" (icone da bandeja e Configuracoes) so aparece
+    # no MrDeskPro (tecnico); no MrDesk dos clientes fica sempre escondido.
+    if mrdesk_profile:
+        hideStopService = filename.strip().lower() != 'mrdeskpro'
     removeWallpaper = params.get('removeWallpaper', True)
     defaultManual = params.get('defaultManual', '')
     overrideManual = params.get('overrideManual', '')
