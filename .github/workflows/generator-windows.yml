@@ -415,9 +415,59 @@ jobs:
           s = s.replace(target, replacement, 1)
           p.write_text(s)
           print("remote_page.dart patched: foco do teclado volta pra tela remota ao ativar a janela")
+
+          # 7) (Item 16) Junto com o heartbeat (a cada ~15 s), manda ha quantos segundos o
+          #    teclado/mouse estao parados ("mrdesk_ocioso"), pro painel mostrar
+          #    "sem uso ha X min". GetLastInputInfo so vale na sessao do usuario - o
+          #    heartbeat sai do processo --server, que o servico abre na sessao do usuario.
+          #    Manda so o tempo parado, nada do que e digitado.
+          p = pathlib.Path("src/hbbs_http/sync.rs")
+          s = p.read_text()
+          target = '                v["modified_at"] = json!(modified_at);\n'
+          if s.count(target) != 1:
+              raise SystemExit(
+                  "ERRO: linha do heartbeat (modified_at) nao encontrada em "
+                  "src/hbbs_http/sync.rs - o RustDesk oficial pode ter mudado o heartbeat. "
+                  "Atualize o patch 7 em generator-windows.yml."
+              )
+          replacement = (
+              target
+              + "                // MrDesk custom (item 16): tempo sem uso de teclado/mouse\n"
+              + "                #[cfg(windows)]\n"
+              + "                {\n"
+              + "                    if let Some(ocioso) = mrdesk_segundos_ocioso() {\n"
+              + '                        v["mrdesk_ocioso"] = json!(ocioso);\n'
+              + "                    }\n"
+              + "                }\n"
+          )
+          s = s.replace(target, replacement, 1)
+          s += (
+              "\n"
+              "// MrDesk custom (item 16): segundos desde o ultimo uso de teclado/mouse na sessao\n"
+              "#[cfg(windows)]\n"
+              "fn mrdesk_segundos_ocioso() -> Option<u64> {\n"
+              "    #[link(name = \"kernel32\")]\n"
+              "    extern \"system\" {\n"
+              "        fn GetTickCount() -> u32;\n"
+              "    }\n"
+              "    use winapi::um::winuser::{GetLastInputInfo, LASTINPUTINFO};\n"
+              "    unsafe {\n"
+              "        let mut lii = LASTINPUTINFO {\n"
+              "            cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,\n"
+              "            dwTime: 0,\n"
+              "        };\n"
+              "        if GetLastInputInfo(&mut lii) == 0 {\n"
+              "            return None;\n"
+              "        }\n"
+              "        Some((GetTickCount().wrapping_sub(lii.dwTime) / 1000) as u64)\n"
+              "    }\n"
+              "}\n"
+          )
+          p.write_text(s)
+          print("sync.rs patched: heartbeat manda tempo sem uso de teclado/mouse (mrdesk_ocioso)")
           PYEOF
 
-          echo "Patches de update aplicados: URL + checagem manual (common.rs) + checagem automatica diaria (updater.rs) + card visivel no Flutter (desktop_home_page.dart) + checagem na interface (common.dart) + foco do teclado ao voltar pra janela (remote_page.dart)"
+          echo "Patches de update aplicados: URL + checagem manual (common.rs) + checagem automatica diaria (updater.rs) + card visivel no Flutter (desktop_home_page.dart) + checagem na interface (common.dart) + foco do teclado ao voltar pra janela (remote_page.dart) + tempo sem uso no heartbeat (sync.rs)"
 
       - name: change appname to custom
         if: env.appname != 'rustdesk'
