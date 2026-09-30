@@ -117,6 +117,12 @@ def generate_custom_client(params, full_url):
     enableRecording = params.get('enableRecording', True)
     enableBlockingInput = params.get('enableBlockingInput', True)
     enableRemoteModi = params.get('enableRemoteModi', False)
+    # MrDesk custom: no MrDesk dos clientes o tecnico conectado precisa poder
+    # mexer nas configuracoes (ex.: trocar servidor/senha) - sem isso elas ficam
+    # travadas durante o acesso remoto. Com o controle de tecnicos (6A), so
+    # tecnico autorizado conecta.
+    if filename.strip().lower() == 'mrdesk':
+        enableRemoteModi = True
     hideStopService = params.get('hideStopService', True)
     # MrDesk custom: "Parar servico" (icone da bandeja e Configuracoes) so aparece
     # no MrDeskPro (tecnico); no MrDesk dos clientes fica sempre escondido.

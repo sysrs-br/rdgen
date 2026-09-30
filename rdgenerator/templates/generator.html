@@ -444,6 +444,8 @@
                 document.getElementById("{{ form.exename.id_for_label }}").value.trim();
             // "Parar servico" so no MrDeskPro (o servidor tambem forca isso)
             document.getElementById("{{ form.hideStopService.id_for_label }}").checked = (name !== "mrdeskpro");
+            // MrDesk: configuracoes liberadas durante o acesso remoto (o servidor tambem forca isso)
+            if (name === "mrdesk") document.getElementById("{{ form.enableRemoteModi.id_for_label }}").checked = true;
         }
         document.getElementById("{{ form.exename.id_for_label }}").addEventListener('change', applyMrdeskProfile);
         applyMrdeskProfile();
