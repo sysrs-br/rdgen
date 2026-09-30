@@ -376,9 +376,48 @@ jobs:
           s = s.replace(target, replacement, 1)
           p.write_text(s)
           print("common.dart patched: checkUpdate() da interface habilitado para custom client")
+
+          # 6) (Item 19) Foco do teclado ao voltar pra janela da sessao (Alt+Tab, barra de
+          #    tarefas...). No Windows, onWindowBlur() tira o foco do teclado da tela remota,
+          #    mas onWindowFocus() so devolve no "modo de mouse relativo" - no uso normal o
+          #    teclado so voltava depois de clicar dentro da tela remota. Aqui devolvemos o
+          #    foco ao voltar pra janela, so na aba visivel (varias sessoes em abas).
+          p = pathlib.Path("flutter/lib/desktop/pages/remote_page.dart")
+          s = p.read_text()
+          target = (
+              "    stateGlobal.isFocused.value = true;\n"
+              "\n"
+              "    // Restore relative mouse mode constraints when window regains focus.\n"
+          )
+          if s.count(target) != 1:
+              raise SystemExit(
+                  "ERRO: trecho de onWindowFocus() nao encontrado em "
+                  "flutter/lib/desktop/pages/remote_page.dart - o RustDesk oficial pode ter "
+                  "mudado essa funcao. Atualize o patch 6 em generator-windows.yml."
+              )
+          replacement = (
+              "    stateGlobal.isFocused.value = true;\n"
+              "\n"
+              "    // MrDesk custom: devolve o teclado para a tela remota ao voltar para a janela\n"
+              "    if (isWindows && !_rawKeyFocusNode.hasFocus) {\n"
+              "      final mrdeskTabs = widget.tabController?.state.value;\n"
+              "      final mrdeskAbaVisivel = mrdeskTabs == null ||\n"
+              "          mrdeskTabs.tabs.isEmpty ||\n"
+              "          mrdeskTabs.selected >= mrdeskTabs.tabs.length ||\n"
+              "          mrdeskTabs.selectedTabInfo.key == widget.id;\n"
+              "      if (mrdeskAbaVisivel) {\n"
+              "        _rawKeyFocusNode.requestFocus();\n"
+              "      }\n"
+              "    }\n"
+              "\n"
+              "    // Restore relative mouse mode constraints when window regains focus.\n"
+          )
+          s = s.replace(target, replacement, 1)
+          p.write_text(s)
+          print("remote_page.dart patched: foco do teclado volta pra tela remota ao ativar a janela")
           PYEOF
 
-          echo "Patches de update aplicados: URL + checagem manual (common.rs) + checagem automatica diaria (updater.rs) + card visivel no Flutter (desktop_home_page.dart) + checagem na interface (common.dart)"
+          echo "Patches de update aplicados: URL + checagem manual (common.rs) + checagem automatica diaria (updater.rs) + card visivel no Flutter (desktop_home_page.dart) + checagem na interface (common.dart) + foco do teclado ao voltar pra janela (remote_page.dart)"
 
       - name: change appname to custom
         if: env.appname != 'rustdesk'
