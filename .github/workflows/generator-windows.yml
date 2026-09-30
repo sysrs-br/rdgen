@@ -465,9 +465,36 @@ jobs:
           )
           p.write_text(s)
           print("sync.rs patched: heartbeat manda tempo sem uso de teclado/mouse (mrdesk_ocioso)")
+
+          # 8) (Item 6A) Controle de tecnicos autorizados, no ponto em que o MrDesk recebe
+          #    o pedido de login (src/server/connection.rs, on_message/LoginRequest), ANTES
+          #    de validar a senha. Vale pra todos os tipos de acesso (controle, arquivos,
+          #    terminal, camera, redirecionamento de porta) e nos dois builds.
+          #    Consulta POST /api/tecnicos/verificar {"id", "peer"} -> {"autorizado": bool},
+          #    espera maxima 5 s; servidor fora -> cache de 72 h por tecnico neste computador.
+          #    Bloqueio/falha: mensagem pra quem conecta + auditoria com "permissao" B/F.
+          p = pathlib.Path("src/server/connection.rs")
+          s = p.read_text()
+          target = (
+              "        if let Some(message::Union::LoginRequest(lr)) = msg.union {\n"
+              "            self.handle_login_request_without_validation(&lr).await;\n"
+              "            if self.authorized {\n"
+              "                return true;\n"
+              "            }\n"
+          )
+          if s.count(target) != 1:
+              raise SystemExit(
+                  "ERRO: inicio do tratamento de LoginRequest nao encontrado em "
+                  "src/server/connection.rs - o RustDesk oficial pode ter mudado o login. "
+                  "Atualize o patch 8 em generator-windows.yml."
+              )
+          s = s.replace(target, target + '            // MrDesk custom (item 6A): so MrDeskPro de tecnico autorizado conecta\n            match mrdesk_verificar_tecnico(&self.lr.my_id).await {\n                MrdeskPermissao::Permitida => {}\n                MrdeskPermissao::Bloqueada => {\n                    log::warn!("MrDesk: conexao bloqueada, tecnico nao autorizado: {}", self.lr.my_id);\n                    self.post_conn_audit(json!({"peer": ((&self.lr.my_id, &self.lr.my_name)), "permissao": "B"}));\n                    self.send_login_error(MRDESK_MSG_BLOQUEADA).await;\n                    sleep(1.).await;\n                    return false;\n                }\n                MrdeskPermissao::Falha => {\n                    log::warn!("MrDesk: nao foi possivel verificar o tecnico {} (servidor fora, sem cache)", self.lr.my_id);\n                    self.post_conn_audit(json!({"peer": ((&self.lr.my_id, &self.lr.my_name)), "permissao": "F"}));\n                    self.send_login_error(MRDESK_MSG_FALHA).await;\n                    sleep(1.).await;\n                    return false;\n                }\n            }\n', 1)
+          s += '\n// ================================================================\n// MrDesk custom (item 6A): controle de tecnicos autorizados.\n// Antes de validar a senha, pergunta ao servidor da Sysrs se o ID de quem\n// esta conectando (MrDeskPro) esta autorizado. Servidor fora: vale a ultima\n// autorizacao desse tecnico neste computador se tiver menos de 72 h.\n// ================================================================\nenum MrdeskPermissao {\n    Permitida,\n    Bloqueada,\n    Falha,\n}\n\nconst MRDESK_CACHE_SEGUNDOS: u64 = 72 * 3600;\nconst MRDESK_MSG_BLOQUEADA: &str = "Conex\\u{e3}o n\\u{e3}o permitida por regras de seguran\\u{e7}a da Sysrs.";\nconst MRDESK_MSG_FALHA: &str = "N\\u{e3}o foi poss\\u{ed}vel verificar a autoriza\\u{e7}\\u{e3}o: servidor da Sysrs fora do ar. Tente novamente em instantes.";\n\nfn mrdesk_agora() -> u64 {\n    std::time::SystemTime::now()\n        .duration_since(std::time::UNIX_EPOCH)\n        .map(|d| d.as_secs())\n        .unwrap_or(0)\n}\n\nasync fn mrdesk_verificar_tecnico(peer_id: &str) -> MrdeskPermissao {\n    let chave = format!("mrdesk-tec-{}", peer_id);\n    let base = crate::get_api_server(\n        Config::get_option("api-server"),\n        Config::get_option("custom-rendezvous-server"),\n    );\n    let mut resposta: Option<bool> = None;\n    if !base.is_empty() {\n        let url = format!("{}/api/tecnicos/verificar", base);\n        let body = json!({ "id": Config::get_id(), "peer": peer_id }).to_string();\n        if let Ok(Ok(texto)) = hbb_common::tokio::time::timeout(\n            std::time::Duration::from_secs(5),\n            crate::post_request(url, body, ""),\n        )\n        .await\n        {\n            resposta = serde_json::from_str::<Value>(&texto)\n                .ok()\n                .and_then(|v| v.get("autorizado").and_then(|a| a.as_bool()));\n        }\n    }\n    match resposta {\n        Some(true) => {\n            hbb_common::config::LocalConfig::set_option(chave, mrdesk_agora().to_string());\n            MrdeskPermissao::Permitida\n        }\n        Some(false) => {\n            hbb_common::config::LocalConfig::set_option(chave, "".to_owned());\n            MrdeskPermissao::Bloqueada\n        }\n        None => {\n            let ultima = hbb_common::config::LocalConfig::get_option(&chave)\n                .parse::<u64>()\n                .unwrap_or(0);\n            if ultima > 0 && mrdesk_agora().saturating_sub(ultima) < MRDESK_CACHE_SEGUNDOS {\n                log::info!("MrDesk: servidor sem resposta, autorizacao em cache para {}", peer_id);\n                MrdeskPermissao::Permitida\n            } else {\n                MrdeskPermissao::Falha\n            }\n        }\n    }\n}\n'
+          p.write_text(s)
+          print("connection.rs patched: controle de tecnicos autorizados (6A)")
           PYEOF
 
-          echo "Patches de update aplicados: URL + checagem manual (common.rs) + checagem automatica diaria (updater.rs) + card visivel no Flutter (desktop_home_page.dart) + checagem na interface (common.dart) + foco do teclado ao voltar pra janela (remote_page.dart) + tempo sem uso no heartbeat (sync.rs)"
+          echo "Patches de update aplicados: URL + checagem manual (common.rs) + checagem automatica diaria (updater.rs) + card visivel no Flutter (desktop_home_page.dart) + checagem na interface (common.dart) + foco do teclado ao voltar pra janela (remote_page.dart) + tempo sem uso no heartbeat (sync.rs) + tecnicos autorizados (connection.rs)"
 
       - name: change appname to custom
         if: env.appname != 'rustdesk'
