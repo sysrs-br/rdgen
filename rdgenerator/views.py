@@ -27,6 +27,13 @@ MRDESK_PROFILES = {
 }
 # Exes de atualizacao servidos pela VM Oracle (Nginx, /opt/mrdesk-suporte/updates/).
 MRDESK_DOWNLOAD_BASE = "https://mrdesk.sysrs.com.br/updates/"
+# Servidor da Sysrs, forcado nos perfis MrDesk/MrDeskPro (01/10/2026): com o
+# campo do servidor vazio o gerador usava o servidor publico do RustDesk e o
+# exe saia sem o nosso servidor, sem avisar. A chave e publica (vai em todo exe).
+MRDESK_SERVER = "mrdesk.sysrs.com.br"
+MRDESK_SERVER_PORT = "21116"
+MRDESK_KEY = "WKEXHYiyfa3Z+tdn14WiausFHxLejv2TU8VajeV+vCU="
+MRDESK_API_SERVER = "https://mrdesk.sysrs.com.br"
 
 
 def generate_custom_client(params, full_url):
@@ -90,6 +97,10 @@ def generate_custom_client(params, full_url):
         removeNewVersionNotif = True
     if mrdesk_profile:
         direction = mrdesk_profile
+        server = MRDESK_SERVER
+        serverPort = MRDESK_SERVER_PORT
+        key = MRDESK_KEY
+        apiServer = MRDESK_API_SERVER
         appname = filename.strip()
         downloadLink = MRDESK_DOWNLOAD_BASE + filename.strip().lower() + ".exe"
     compname = params.get('compname', '')

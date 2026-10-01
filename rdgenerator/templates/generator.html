@@ -442,6 +442,11 @@
                 "https://mrdesk.sysrs.com.br/updates/" + name + ".exe";
             document.getElementById("{{ form.appname.id_for_label }}").value =
                 document.getElementById("{{ form.exename.id_for_label }}").value.trim();
+            // Servidor, porta, chave e API da Sysrs (o servidor tambem forca isso)
+            document.getElementById("{{ form.serverIP.id_for_label }}").value = "mrdesk.sysrs.com.br";
+            document.getElementById("{{ form.serverPort.id_for_label }}").value = "21116";
+            document.getElementById("{{ form.key.id_for_label }}").value = "WKEXHYiyfa3Z+tdn14WiausFHxLejv2TU8VajeV+vCU=";
+            document.getElementById("{{ form.apiServer.id_for_label }}").value = "https://mrdesk.sysrs.com.br";
             // "Parar servico" so no MrDeskPro (o servidor tambem forca isso)
             document.getElementById("{{ form.hideStopService.id_for_label }}").checked = (name !== "mrdeskpro");
             // MrDesk: configuracoes liberadas durante o acesso remoto (o servidor tambem forca isso)
