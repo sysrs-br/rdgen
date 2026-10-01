@@ -537,6 +537,28 @@ jobs:
               p.write_text(s)
           print("common.dart/tabbar_widget.dart patched: aba com o nome do cliente (item 27)")
 
+          # 13) (Item 13) Codigo unico por conexao ("mrdesk_ref") em todos os avisos de
+          #     auditoria (src/server/connection.rs, post_conn_audit).
+          p = pathlib.Path("src/server/connection.rs")
+          s = p.read_text()
+          if s.count('        v["conn_id"] = json!(self.inner.id);\n') != 1:
+              raise SystemExit("ERRO: conn_id da auditoria nao encontrado em src/server/connection.rs - atualize o patch 13.")
+          s = s.replace('        v["conn_id"] = json!(self.inner.id);\n', '        v["conn_id"] = json!(self.inner.id);\n        v["mrdesk_ref"] = json!(format!("{}-{}", mrdesk_base_ref(), self.inner.id)); // MrDesk custom (item 13)\n', 1)
+          s += '\n// MrDesk custom (item 13): codigo unico por conexao nos avisos de auditoria.\n// O conn_id recomeca quando o servico reinicia; somando um codigo gerado no\n// inicio do processo, cada acesso tem um identificador que nunca se repete.\nfn mrdesk_base_ref() -> &\'static str {\n    static BASE: std::sync::OnceLock<String> = std::sync::OnceLock::new();\n    BASE.get_or_init(|| {\n        format!(\n            "{:x}",\n            std::time::SystemTime::now()\n                .duration_since(std::time::UNIX_EPOCH)\n                .map(|d| d.as_nanos())\n                .unwrap_or(0)\n        )\n    })\n}\n'
+          p.write_text(s)
+          print("connection.rs patched: codigo unico por conexao na auditoria (item 13)")
+
+          # 14) (Item 20) Senha lembrada: registrar no log normal quando ela e gravada ou
+          #     apagada (src/client.rs; antes so em nivel debug, que nao vai pro arquivo).
+          p = pathlib.Path("src/client.rs")
+          s = p.read_text()
+          for alvo, novo in (('log::debug!("remove password of {}", self.id);', 'log::info!("MrDesk: senha lembrada removida do ID {} (login sem lembrar senha)", self.id);'), ('log::debug!("remember password of {}", self.id);', 'log::info!("MrDesk: senha lembrada gravada para o ID {}", self.id);')):
+              if s.count(alvo) != 1:
+                  raise SystemExit("ERRO: log da senha lembrada nao encontrado em src/client.rs - atualize o patch 14.")
+              s = s.replace(alvo, novo, 1)
+          p.write_text(s)
+          print("client.rs patched: log da senha lembrada (item 20)")
+
           # 9) Versao propria do MrDesk (decisao do Celso em 30/09/2026). Melhoria nossa
           #    sem versao nova do RustDesk nao chegava aos clientes pela atualizacao
           #    automatica (versao igual). A cada build que deva ser distribuido, aumentar
@@ -578,7 +600,7 @@ jobs:
           print("versao propria do MrDesk: " + MRDESK_VERSAO + " (RustDesk " + MRDESK_BASE + ")")
           PYEOF
 
-          echo "Patches de update aplicados: URL + checagem manual (common.rs) + checagem automatica diaria (updater.rs) + card visivel no Flutter (desktop_home_page.dart) + checagem na interface (common.dart) + foco do teclado ao voltar pra janela (remote_page.dart) + tempo sem uso no heartbeat (sync.rs) + tecnicos autorizados (connection.rs) + lista guardada (sync.rs) + card cliente/apelido (peer_card.dart) + aba com nome do cliente + versao propria (Cargo/pubspec)"
+          echo "Patches de update aplicados: URL + checagem manual (common.rs) + checagem automatica diaria (updater.rs) + card visivel no Flutter (desktop_home_page.dart) + checagem na interface (common.dart) + foco do teclado ao voltar pra janela (remote_page.dart) + tempo sem uso no heartbeat (sync.rs) + tecnicos autorizados (connection.rs) + lista guardada (sync.rs) + card cliente/apelido (peer_card.dart) + aba com nome do cliente + ref da auditoria + log da senha lembrada + versao propria (Cargo/pubspec)"
 
       - name: change appname to custom
         if: env.appname != 'rustdesk'

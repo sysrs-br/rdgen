@@ -216,6 +216,10 @@ def generate_custom_client(params, full_url):
     decodedCustom['enable-lan-discovery'] = 'N' if denyLan else 'Y'
     #decodedCustom['direct-server'] = 'Y' if enableDirectIP else 'N'
     decodedCustom['allow-auto-disconnect'] = 'Y' if autoClose else 'N'
+    # MrDesk custom (item 26): no MrDeskPro, toda sessao abre em "escala adaptada"
+    # por padrao (o ajuste por ID as vezes se perde; ver estado-atual.md).
+    if filename.strip().lower() == 'mrdeskpro':
+        decodedCustom['default-settings']['view_style'] = 'adaptive'
 
     if permissionsDorO == "default":
         decodedCustom['default-settings']['access-mode'] = permissionsType
