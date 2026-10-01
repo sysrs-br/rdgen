@@ -559,6 +559,141 @@ jobs:
           p.write_text(s)
           print("client.rs patched: log da senha lembrada (item 20)")
 
+          # 15) (Item 28) Transferencia de arquivos (MrDeskPro, lados local e remoto):
+          #     Enter entra na pasta/unidade selecionada (igual ao duplo clique) e zera a
+          #     busca por nome; Backspace volta pra pasta de cima (como no Explorer).
+          #     Lado remoto volta pra ultima pasta usada (a pasta inicial que o remoto
+          #     manda ao conectar nao tem mais preferencia sobre a guardada; se a guardada
+          #     nao existir, abre a do usuario).
+          p = pathlib.Path("flutter/lib/desktop/widgets/list_search_action_listener.dart")
+          s = p.read_text()
+          for alvo, novo in (
+              ("import 'package:flutter/material.dart';\n",
+               "import 'package:flutter/material.dart';\nimport 'package:flutter/services.dart';\n"),
+              ("  final Function(String) onSearch;\n",
+               "  final Function(String) onSearch;\n  final Function()? onEnter; // MrDesk custom (item 28)\n  final Function()? onBackspace; // MrDesk custom (item 28)\n"),
+              ("      required this.onSearch});\n",
+               "      required this.onSearch,\n      this.onEnter,\n      this.onBackspace});\n"),
+              ("        onKeyEvent: (kv) {\n",
+               "        onKeyEvent: (kv) {\n"
+               "          // MrDesk custom (item 28): Enter entra na pasta, Backspace volta.\n"
+               "          if (kv.logicalKey == LogicalKeyboardKey.enter ||\n"
+               "              kv.logicalKey == LogicalKeyboardKey.numpadEnter) {\n"
+               "            if (kv is KeyDownEvent && onEnter != null) {\n"
+               "              buffer.clear();\n"
+               "              onEnter!();\n"
+               "            }\n"
+               "            return;\n"
+               "          }\n"
+               "          if (kv.logicalKey == LogicalKeyboardKey.backspace) {\n"
+               "            if (kv is! KeyUpEvent && onBackspace != null) {\n"
+               "              buffer.clear();\n"
+               "              onBackspace!();\n"
+               "            }\n"
+               "            return;\n"
+               "          }\n"),
+              ("  String get buffer => _buffer;\n",
+               "  String get buffer => _buffer;\n\n"
+               "  // MrDesk custom (item 28): recomeca a busca por nome (ex.: depois de entrar na pasta).\n"
+               "  void clear() {\n"
+               "    _buffer = \"\";\n"
+               "    _duration = DateTime.fromMillisecondsSinceEpoch(0);\n"
+               "  }\n"),
+          ):
+              if s.count(alvo) != 1:
+                  raise SystemExit("ERRO: trecho nao encontrado em list_search_action_listener.dart - atualize o patch 15.")
+              s = s.replace(alvo, novo, 1)
+          p.write_text(s)
+
+          p = pathlib.Path("flutter/lib/desktop/pages/file_manager_page.dart")
+          s = p.read_text()
+          for alvo, novo in (
+              ("      node: _keyboardNode,\n      buffer: _listSearchBuffer,\n",
+               "      node: _keyboardNode,\n      buffer: _listSearchBuffer,\n"
+               "      // MrDesk custom (item 28): Enter entra na pasta/unidade selecionada.\n"
+               "      // Unidade (C:, D:) nao fica em selectedItems: usa a achada pela busca.\n"
+               "      onEnter: () {\n"
+               "        Entry? entry;\n"
+               "        if (selectedItems.items.length == 1) {\n"
+               "          entry = selectedItems.items.first;\n"
+               "        } else if (selectedItems.items.isEmpty &&\n"
+               "            _mrdeskAchadoBusca != null &&\n"
+               "            _mrdeskAchadoBusca!.isDrive &&\n"
+               "            controller.directory.value.entries.contains(_mrdeskAchadoBusca)) {\n"
+               "          entry = _mrdeskAchadoBusca;\n"
+               "        }\n"
+               "        if (entry == null || entry.isFile) return;\n"
+               "        _mrdeskAchadoBusca = null;\n"
+               "        selectedItems.clear();\n"
+               "        controller.openDirectory(entry.path);\n"
+               "      },\n"
+               "      // MrDesk custom (item 28): Backspace volta pra pasta de cima.\n"
+               "      onBackspace: () {\n"
+               "        _mrdeskAchadoBusca = null;\n"
+               "        selectedItems.clear();\n"
+               "        controller.goToParentDirectory();\n"
+               "      },\n"),
+              ("  final _listSearchBuffer = TimeoutStringBuffer();\n",
+               "  final _listSearchBuffer = TimeoutStringBuffer();\n"
+               "  Entry? _mrdeskAchadoBusca; // MrDesk custom (item 28): ultimo item achado pela busca\n"),
+              ("    selectedEntries.add(searchResult.first);\n",
+               "    selectedEntries.add(searchResult.first);\n"
+               "    _mrdeskAchadoBusca = searchResult.first; // MrDesk custom (item 28)\n"),
+          ):
+              if s.count(alvo) != 1:
+                  raise SystemExit("ERRO: trecho nao encontrado em file_manager_page.dart - atualize o patch 15.")
+              s = s.replace(alvo, novo, 1)
+          p.write_text(s)
+
+          p = pathlib.Path("flutter/lib/models/file_model.dart")
+          s = p.read_text()
+          for alvo, novo in (
+              ("        if (directory.value.path.isNotEmpty) directory.value.path,\n",
+               "        // MrDesk custom (item 28): a pasta inicial que o remoto manda ao conectar\n"
+               "        // (igual a home) nao passa na frente da ultima pasta guardada.\n"
+               "        if (directory.value.path.isNotEmpty &&\n"
+               "            directory.value.path != options.value.home)\n"
+               "          directory.value.path,\n"),
+              ("        debugPrint(\"init remote home: ${fd.path}\");\n        directory.value = fd;\n",
+               "        debugPrint(\"init remote home: ${fd.path}\");\n"
+               "        // MrDesk custom (item 28): nao troca a pasta se a guardada ja foi aberta.\n"
+               "        if (directory.value.path.isEmpty) directory.value = fd;\n"),
+          ):
+              if s.count(alvo) != 1:
+                  raise SystemExit("ERRO: trecho da ultima pasta nao encontrado em file_model.dart - atualize o patch 15.")
+              s = s.replace(alvo, novo, 1)
+          p.write_text(s)
+          print("file manager patched: Enter/Backspace e ultima pasta remota (item 28)")
+
+          # 16) (Item 29) Nome da aba = cliente tambem no acesso direto (ID digitado,
+          #     card, Recentes, Favoritos): ao conectar, se o ID esta no catalogo de
+          #     enderecos (login MrDeskPro), guarda o cliente (campo username do
+          #     catalogo) na opcao 'mrdesk-cliente' do ID - a mesma do link do painel
+          #     (patch 12). Usa flutter/lib/common.dart, funcao connect().
+          p = pathlib.Path("flutter/lib/common.dart")
+          s = p.read_text()
+          alvo = "  forceRelay = id != oldId || forceRelay;\n"
+          if s.count(alvo) != 1:
+              raise SystemExit("ERRO: connect() nao encontrado em flutter/lib/common.dart - atualize o patch 16.")
+          s = s.replace(alvo, alvo +
+              "  // MrDesk custom (item 29): nome do cliente vindo do catalogo de enderecos.\n"
+              "  if (!isDesktop || desktopType == DesktopType.main) {\n"
+              "    try {\n"
+              "      final mrdeskAb = gFFI.abModel.find(id);\n"
+              "      if (mrdeskAb != null &&\n"
+              "          mrdeskAb.username.isNotEmpty &&\n"
+              "          bind.mainGetPeerOptionSync(id: id, key: 'mrdesk-cliente') !=\n"
+              "              mrdeskAb.username) {\n"
+              "        await bind.mainSetPeerOption(\n"
+              "            id: id, key: 'mrdesk-cliente', value: mrdeskAb.username);\n"
+              "      }\n"
+              "    } catch (e) {\n"
+              "      debugPrint('MrDesk: sem nome do cliente no catalogo: $e');\n"
+              "    }\n"
+              "  }\n", 1)
+          p.write_text(s)
+          print("common.dart patched: nome do cliente do catalogo no acesso direto (item 29)")
+
           # 9) Versao propria do MrDesk (decisao do Celso em 30/09/2026). Melhoria nossa
           #    sem versao nova do RustDesk nao chegava aos clientes pela atualizacao
           #    automatica (versao igual). A cada build que deva ser distribuido, aumentar
