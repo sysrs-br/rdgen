@@ -694,6 +694,21 @@ jobs:
           p.write_text(s)
           print("common.dart patched: nome do cliente do catalogo no acesso direto (item 29)")
 
+          # 17) (Item 24) MrDeskPro logado no catalogo nao conectava ("Failed to secure
+          #     tcp: deadline has elapsed"): com login (access_token) o cliente exige uma
+          #     troca de chaves com o hbbs antes de conectar, pra proteger o token, e o
+          #     hbbs de codigo aberto (1.1.15) nao responde. O token de login so serve ao
+          #     servidor Pro; o nosso hbbs ignora. Entao nao mandamos o token pro hbbs:
+          #     sem token nao ha a troca de chaves (src/client.rs).
+          p = pathlib.Path("src/client.rs")
+          s = p.read_text()
+          alvo = '            (peer, "", key, token)\n'
+          if s.count(alvo) != 1:
+              raise SystemExit("ERRO: token da conexao nao encontrado em src/client.rs - atualize o patch 17.")
+          s = s.replace(alvo, '            (peer, "", key, "") // MrDesk custom (patch 17): sem token pro hbbs\n', 1)
+          p.write_text(s)
+          print("client.rs patched: conexao sem token de login pro hbbs (item 24)")
+
           # 9) Versao propria do MrDesk (decisao do Celso em 30/09/2026). Melhoria nossa
           #    sem versao nova do RustDesk nao chegava aos clientes pela atualizacao
           #    automatica (versao igual). A cada build que deva ser distribuido, aumentar
