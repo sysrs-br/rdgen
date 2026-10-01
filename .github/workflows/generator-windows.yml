@@ -522,6 +522,21 @@ jobs:
           p.write_text(s)
           print("peer_card.dart patched: cliente a esquerda e apelido a direita (item 24)")
 
+          # 12) (Item 27) Nome da aba da sessao = nome do cliente. O painel manda
+          #     ?cliente=... no link mrdeskpro://; guardamos como opcao do ID
+          #     ('mrdesk-cliente') e getDesktopTabLabel usa. Dica da aba mostra o ID.
+          for arquivo, alvo, novo in (
+                  ("flutter/lib/common.dart", '  List<String> args = List.empty(growable: true);\n  if (command != null && id != null) {\n', '  // MrDesk custom (item 27): o painel manda o nome do cliente no link\n  // (mrdeskpro://connect/<ID>?cliente=...); fica guardado no ID e vira o nome da aba.\n  final mrdeskCliente = queryParameters["cliente"];\n  if (id != null && mrdeskCliente != null && mrdeskCliente.isNotEmpty) {\n    bind.mainSetPeerOption(id: id, key: \'mrdesk-cliente\', value: mrdeskCliente);\n  }\n  List<String> args = List.empty(growable: true);\n  if (command != null && id != null) {\n'),
+                  ("flutter/lib/common.dart", 'String getDesktopTabLabel(String peerId, String alias) {\n  String label = alias.isEmpty ? peerId : alias;\n', "String getDesktopTabLabel(String peerId, String alias) {\n  // MrDesk custom (item 27): aba com o nome do cliente (vindo do painel)\n  try {\n    final mrdeskCfg = jsonDecode(bind.mainGetPeerSync(id: peerId));\n    final mrdeskCliente = mrdeskCfg['options']?['mrdesk-cliente'];\n    if (mrdeskCliente is String && mrdeskCliente.isNotEmpty) {\n      return mrdeskCliente;\n    }\n  } catch (e) {\n    debugPrint('MrDesk: sem nome de cliente para a aba: $e');\n  }\n  String label = alias.isEmpty ? peerId : alias;\n"),
+                  ("flutter/lib/desktop/widgets/tabbar_widget.dart", "            message:\n                widget.tabType == DesktopTabType.main ? '' : widget.label.value,\n", "            message: widget.tabType == DesktopTabType.main\n                ? ''\n                // MrDesk custom (item 27): dica da aba mostra tambem o ID\n                : (widget.label.value == widget.tabInfoKey\n                    ? widget.label.value\n                    : '${widget.label.value} - ID ${widget.tabInfoKey}'),\n")):
+              p = pathlib.Path(arquivo)
+              s = p.read_text()
+              if s.count(alvo) != 1:
+                  raise SystemExit("ERRO: trecho do nome da aba nao encontrado em " + arquivo + " - atualize o patch 12.")
+              s = s.replace(alvo, novo, 1)
+              p.write_text(s)
+          print("common.dart/tabbar_widget.dart patched: aba com o nome do cliente (item 27)")
+
           # 9) Versao propria do MrDesk (decisao do Celso em 30/09/2026). Melhoria nossa
           #    sem versao nova do RustDesk nao chegava aos clientes pela atualizacao
           #    automatica (versao igual). A cada build que deva ser distribuido, aumentar
@@ -563,7 +578,7 @@ jobs:
           print("versao propria do MrDesk: " + MRDESK_VERSAO + " (RustDesk " + MRDESK_BASE + ")")
           PYEOF
 
-          echo "Patches de update aplicados: URL + checagem manual (common.rs) + checagem automatica diaria (updater.rs) + card visivel no Flutter (desktop_home_page.dart) + checagem na interface (common.dart) + foco do teclado ao voltar pra janela (remote_page.dart) + tempo sem uso no heartbeat (sync.rs) + tecnicos autorizados (connection.rs) + lista guardada (sync.rs) + card cliente/apelido (peer_card.dart) + versao propria (Cargo/pubspec)"
+          echo "Patches de update aplicados: URL + checagem manual (common.rs) + checagem automatica diaria (updater.rs) + card visivel no Flutter (desktop_home_page.dart) + checagem na interface (common.dart) + foco do teclado ao voltar pra janela (remote_page.dart) + tempo sem uso no heartbeat (sync.rs) + tecnicos autorizados (connection.rs) + lista guardada (sync.rs) + card cliente/apelido (peer_card.dart) + aba com nome do cliente + versao propria (Cargo/pubspec)"
 
       - name: change appname to custom
         if: env.appname != 'rustdesk'
