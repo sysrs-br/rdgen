@@ -185,6 +185,13 @@ def generate_custom_client(params, full_url):
         decodedCustom['disable-settings'] = 'Y'
     if account == "accountN":
         decodedCustom['disable-account'] = 'Y'
+    # MrDesk custom (item 24): login (catalogo de enderecos do painel) so no
+    # MrDeskPro; no MrDesk dos clientes fica sempre desligado.
+    if mrdesk_profile:
+        if filename.strip().lower() == 'mrdeskpro':
+            decodedCustom.pop('disable-account', None)
+        else:
+            decodedCustom['disable-account'] = 'Y'
     # MrDesk custom: ninguem troca o ID (nem cliente nem tecnico). O painel e a
     # lista de tecnicos autorizados dependem do ID; tira o botao "Change ID".
     if mrdesk_profile:

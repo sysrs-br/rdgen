@@ -507,6 +507,21 @@ jobs:
           p.write_text(s)
           print("sync.rs patched: lista de tecnicos guardada (item 23)")
 
+          # 11) (Item 24) Card de dispositivo (Recentes, Favoritos e catalogo do
+          #     MrDeskPro): 2a linha com usuario/cliente a esquerda e
+          #     computador/apelido a direita (flutter/lib/common/widgets/peer_card.dart).
+          p = pathlib.Path("flutter/lib/common/widgets/peer_card.dart")
+          s = p.read_text()
+          for nome_trecho, alvo, novo in (("lista", '                              child: Align(\n                                alignment: Alignment.centerLeft,\n                                child: Text(\n                                  name,\n                                  style: isPortrait ? null : greyStyle,\n                                  textAlign: TextAlign.start,\n                                  overflow: TextOverflow.ellipsis,\n                                ),\n                              ),\n', '                              child: mrdeskLinhaNome(peer, name,\n                                  isPortrait ? null : greyStyle, TextAlign.start),\n'),
+                                          ("card", '                                      child: Text(\n                                        name,\n                                        style: const TextStyle(\n                                            color: Colors.white70,\n                                            fontSize: 12),\n                                        textAlign: TextAlign.center,\n                                        overflow: TextOverflow.ellipsis,\n                                      ),\n', '                                      child: mrdeskLinhaNome(peer, name,\n                                          const TextStyle(color: Colors.white70, fontSize: 12),\n                                          TextAlign.center),\n')):
+              if s.count(alvo) != 1:
+                  raise SystemExit("ERRO: trecho do nome (" + nome_trecho + ") nao encontrado em "
+                                   "flutter/lib/common/widgets/peer_card.dart - atualize o patch 11.")
+              s = s.replace(alvo, novo, 1)
+          s += '\n// MrDesk custom (item 24): 2a linha do card com o usuario (no catalogo do\n// MrDeskPro: o cliente) a esquerda e o computador (no catalogo: o apelido) a\n// direita, em vez de "usuario@computador".\nWidget mrdeskLinhaNome(\n    Peer peer, String name, TextStyle? style, TextAlign alinhamentoSimples) {\n  if (peer.username.isEmpty || peer.hostname.isEmpty || name == peer.hostname) {\n    return Align(\n      alignment: alinhamentoSimples == TextAlign.center\n          ? Alignment.center\n          : Alignment.centerLeft,\n      child: Text(name,\n          style: style,\n          textAlign: alinhamentoSimples,\n          overflow: TextOverflow.ellipsis),\n    );\n  }\n  return Row(children: [\n    Expanded(\n        child: Text(peer.username,\n            style: style,\n            textAlign: TextAlign.start,\n            overflow: TextOverflow.ellipsis)),\n    const SizedBox(width: 8),\n    Flexible(\n        child: Text(peer.hostname,\n            style: style,\n            textAlign: TextAlign.end,\n            overflow: TextOverflow.ellipsis)),\n  ]);\n}\n'
+          p.write_text(s)
+          print("peer_card.dart patched: cliente a esquerda e apelido a direita (item 24)")
+
           # 9) Versao propria do MrDesk (decisao do Celso em 30/09/2026). Melhoria nossa
           #    sem versao nova do RustDesk nao chegava aos clientes pela atualizacao
           #    automatica (versao igual). A cada build que deva ser distribuido, aumentar
@@ -548,7 +563,7 @@ jobs:
           print("versao propria do MrDesk: " + MRDESK_VERSAO + " (RustDesk " + MRDESK_BASE + ")")
           PYEOF
 
-          echo "Patches de update aplicados: URL + checagem manual (common.rs) + checagem automatica diaria (updater.rs) + card visivel no Flutter (desktop_home_page.dart) + checagem na interface (common.dart) + foco do teclado ao voltar pra janela (remote_page.dart) + tempo sem uso no heartbeat (sync.rs) + tecnicos autorizados (connection.rs) + lista guardada (sync.rs) + versao propria (Cargo/pubspec)"
+          echo "Patches de update aplicados: URL + checagem manual (common.rs) + checagem automatica diaria (updater.rs) + card visivel no Flutter (desktop_home_page.dart) + checagem na interface (common.dart) + foco do teclado ao voltar pra janela (remote_page.dart) + tempo sem uso no heartbeat (sync.rs) + tecnicos autorizados (connection.rs) + lista guardada (sync.rs) + card cliente/apelido (peer_card.dart) + versao propria (Cargo/pubspec)"
 
       - name: change appname to custom
         if: env.appname != 'rustdesk'
