@@ -537,16 +537,16 @@ jobs:
               p.write_text(s)
           print("common.dart/tabbar_widget.dart patched: aba com o nome do cliente (item 27)")
 
-          # 13) (Item 13) Codigo unico por conexao ("mrdesk_ref") em todos os avisos de
+          # 13) (Item 13) Numero unico por acesso ("mrdesk_acesso", BIGINT) em todos os avisos de
           #     auditoria (src/server/connection.rs, post_conn_audit).
           p = pathlib.Path("src/server/connection.rs")
           s = p.read_text()
           if s.count('        v["conn_id"] = json!(self.inner.id);\n') != 1:
               raise SystemExit("ERRO: conn_id da auditoria nao encontrado em src/server/connection.rs - atualize o patch 13.")
-          s = s.replace('        v["conn_id"] = json!(self.inner.id);\n', '        v["conn_id"] = json!(self.inner.id);\n        v["mrdesk_ref"] = json!(format!("{}-{}", mrdesk_base_ref(), self.inner.id)); // MrDesk custom (item 13)\n', 1)
-          s += '\n// MrDesk custom (item 13): codigo unico por conexao nos avisos de auditoria.\n// O conn_id recomeca quando o servico reinicia; somando um codigo gerado no\n// inicio do processo, cada acesso tem um identificador que nunca se repete.\nfn mrdesk_base_ref() -> &\'static str {\n    static BASE: std::sync::OnceLock<String> = std::sync::OnceLock::new();\n    BASE.get_or_init(|| {\n        format!(\n            "{:x}",\n            std::time::SystemTime::now()\n                .duration_since(std::time::UNIX_EPOCH)\n                .map(|d| d.as_nanos())\n                .unwrap_or(0)\n        )\n    })\n}\n'
+          s = s.replace('        v["conn_id"] = json!(self.inner.id);\n', '        v["conn_id"] = json!(self.inner.id);\n        v["mrdesk_acesso"] = json!(mrdesk_inicio_servico() * 1_000_000 + (self.inner.id as i64).rem_euclid(1_000_000)); // MrDesk custom (item 13)\n', 1)
+          s += '\n// MrDesk custom (item 13): numero unico por acesso nos avisos de auditoria\n// (coluna auditoria.acesso, BIGINT). O conn_id recomeca do 1 quando o servico\n// reinicia; juntando o segundo em que o processo iniciou (10 digitos) com o\n// conn_id (6 digitos), cada acesso tem um numero que nao se repete.\nfn mrdesk_inicio_servico() -> i64 {\n    static INICIO: std::sync::OnceLock<i64> = std::sync::OnceLock::new();\n    *INICIO.get_or_init(|| {\n        std::time::SystemTime::now()\n            .duration_since(std::time::UNIX_EPOCH)\n            .map(|d| d.as_secs() as i64)\n            .unwrap_or(0)\n    })\n}\n'
           p.write_text(s)
-          print("connection.rs patched: codigo unico por conexao na auditoria (item 13)")
+          print("connection.rs patched: numero unico por acesso na auditoria (item 13)")
 
           # 14) (Item 20) Senha lembrada: registrar no log normal quando ela e gravada ou
           #     apagada (src/client.rs; antes so em nivel debug, que nao vai pro arquivo).
