@@ -239,6 +239,20 @@ def generate_custom_client(params, full_url):
         # servidor, acrescentava os recentes e trocava cliente/apelido pelo
         # usuario/computador na lista local. Fica travado em desligado.
         decodedCustom['override-settings']['sync-ab-with-recent-sessions'] = 'N'
+        # (02/10) "Pedir anotacao ao fim da conexao" grava numa rota do servidor
+        # Pro (/api/audit) que nao temos: travado em desligado.
+        decodedCustom['override-settings']['allow-ask-for-note'] = 'N'
+        # (02/10) Aba "Descobertos" (rede local) nao e usada: oculta.
+        decodedCustom['override-settings']['disable-discovery-panel'] = 'Y'
+    if filename.strip().lower() == 'mrdesk':
+        # (02/10) Gravacao automatica das sessoes recebidas no computador do
+        # cliente: travada em desligado.
+        decodedCustom['override-settings']['allow-auto-record-incoming'] = 'N'
+    if mrdesk_profile:
+        # (02/10) Servidor de ID/relay/API e chave vao fixos no exe: a tela de
+        # configuracao do servidor fica oculta (o proxy continua visivel), pra
+        # ninguem apontar o programa pra outro servidor.
+        decodedCustom['override-settings']['hide-server-settings'] = 'Y'
 
     if permissionsDorO == "default":
         decodedCustom['default-settings']['access-mode'] = permissionsType
