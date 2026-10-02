@@ -205,11 +205,14 @@ def generate_custom_client(params, full_url):
             decodedCustom['disable-account'] = 'Y'
     # MrDesk custom: ninguem troca o ID (nem cliente nem tecnico). O painel e a
     # lista de tecnicos autorizados dependem do ID; tira o botao "Change ID".
-    if mrdesk_profile:
-        decodedCustom['disable-change-id'] = 'Y'
     if appname.upper != "rustdesk".upper and appname != "":
         decodedCustom['app-name'] = appname
     decodedCustom['override-settings'] = {}
+    # (02/10) 'disable-change-id' e uma opcao embutida do RustDesk: so vale dentro
+    # de override-settings. Solta no nivel de cima ela era ignorada e o botao
+    # "Alterar ID" continuava aparecendo.
+    if mrdesk_profile:
+        decodedCustom['override-settings']['disable-change-id'] = 'Y'
     decodedCustom['default-settings'] = {}
     if permPass != "":
         decodedCustom['password'] = permPass
