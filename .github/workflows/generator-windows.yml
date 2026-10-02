@@ -562,6 +562,10 @@ jobs:
           # 15) (Item 28) Transferencia de arquivos (MrDeskPro, lados local e remoto):
           #     Enter entra na pasta/unidade selecionada (igual ao duplo clique) e zera a
           #     busca por nome; Backspace volta pra pasta de cima (como no Explorer).
+          #     Busca por nome: usa sempre a lista da pasta atual (antes ficava com a
+          #     lista antiga depois de trocar de pasta, ate clicar em alguma linha);
+          #     se o texto digitado nao acha nada, recomeca da ultima letra; Esc zera.
+          #     Depois de trocar de pasta o foco do teclado volta pra lista.
           #     Lado remoto volta pra ultima pasta usada (a pasta inicial que o remoto
           #     manda ao conectar nao tem mais preferencia sobre a guardada; se a guardada
           #     nao existir, abre a do usuario).
@@ -571,9 +575,9 @@ jobs:
               ("import 'package:flutter/material.dart';\n",
                "import 'package:flutter/material.dart';\nimport 'package:flutter/services.dart';\n"),
               ("  final Function(String) onSearch;\n",
-               "  final Function(String) onSearch;\n  final Function()? onEnter; // MrDesk custom (item 28)\n  final Function()? onBackspace; // MrDesk custom (item 28)\n"),
+               "  final Function(String) onSearch;\n  final Function()? onEnter; // MrDesk custom (item 28)\n  final Function()? onBackspace; // MrDesk custom (item 28)\n  final Function()? onEscape; // MrDesk custom (item 28)\n"),
               ("      required this.onSearch});\n",
-               "      required this.onSearch,\n      this.onEnter,\n      this.onBackspace});\n"),
+               "      required this.onSearch,\n      this.onEnter,\n      this.onBackspace,\n      this.onEscape});\n"),
               ("        onKeyEvent: (kv) {\n",
                "        onKeyEvent: (kv) {\n"
                "          // MrDesk custom (item 28): Enter entra na pasta, Backspace volta.\n"
@@ -591,6 +595,14 @@ jobs:
                "              onBackspace!();\n"
                "            }\n"
                "            return;\n"
+               "          }\n"
+               "          // Esc zera a busca por nome.\n"
+               "          if (kv.logicalKey == LogicalKeyboardKey.escape) {\n"
+               "            if (kv is KeyDownEvent) {\n"
+               "              buffer.clear();\n"
+               "              if (onEscape != null) onEscape!();\n"
+               "            }\n"
+               "            return;\n"
                "          }\n"),
               ("  String get buffer => _buffer;\n",
                "  String get buffer => _buffer;\n\n"
@@ -598,6 +610,11 @@ jobs:
                "  void clear() {\n"
                "    _buffer = \"\";\n"
                "    _duration = DateTime.fromMillisecondsSinceEpoch(0);\n"
+               "  }\n\n"
+               "  // MrDesk custom (item 28): recomeca a busca a partir deste texto.\n"
+               "  void reset(String s) {\n"
+               "    _buffer = s.toLowerCase();\n"
+               "    _duration = DateTime.now();\n"
                "  }\n"),
           ):
               if s.count(alvo) != 1:
@@ -625,14 +642,59 @@ jobs:
                "        if (entry == null || entry.isFile) return;\n"
                "        _mrdeskAchadoBusca = null;\n"
                "        selectedItems.clear();\n"
-               "        controller.openDirectory(entry.path);\n"
+               "        controller.openDirectory(entry.path).then((_) => _mrdeskFocarLista());\n"
                "      },\n"
                "      // MrDesk custom (item 28): Backspace volta pra pasta de cima.\n"
                "      onBackspace: () {\n"
                "        _mrdeskAchadoBusca = null;\n"
                "        selectedItems.clear();\n"
-               "        controller.goToParentDirectory();\n"
+               "        controller.openDirectory('..').then((_) => _mrdeskFocarLista());\n"
+               "      },\n"
+               "      // MrDesk custom (item 28): Esc zera a busca e a selecao.\n"
+               "      onEscape: () {\n"
+               "        _mrdeskAchadoBusca = null;\n"
+               "        selectedItems.clear();\n"
                "      },\n"),
+              ("      onNext: (buffer) {\n",
+               "      onNext: (buffer) {\n"
+               "        // MrDesk custom (item 28): sempre a lista da pasta atual.\n"
+               "        final entries = controller.directory.value.entries;\n"),
+              ("      onSearch: (buffer) {\n"
+               "        debugPrint(\"searching for $buffer\");\n"
+               "        final selectedEntries = selectedItems;\n"
+               "        final searchResult = entries\n"
+               "            .where((element) => element.name.toLowerCase().startsWith(buffer));\n",
+               "      onSearch: (buffer) {\n"
+               "        debugPrint(\"searching for $buffer\");\n"
+               "        // MrDesk custom (item 28): sempre a lista da pasta atual.\n"
+               "        final entries = controller.directory.value.entries;\n"
+               "        final selectedEntries = selectedItems;\n"
+               "        var searchResult = entries\n"
+               "            .where((element) => element.name.toLowerCase().startsWith(buffer));\n"
+               "        // MrDesk custom (item 28): nada achado -> recomeca da ultima letra.\n"
+               "        if (searchResult.isEmpty && buffer.length > 1) {\n"
+               "          final ultima = buffer.substring(buffer.length - 1);\n"
+               "          _listSearchBuffer.reset(ultima);\n"
+               "          searchResult = entries.where(\n"
+               "              (element) => element.name.toLowerCase().startsWith(ultima));\n"
+               "        }\n"),
+              ("    controller.directory.listen((e) => breadCrumbScrollToEnd());\n",
+               "    controller.directory.listen((e) {\n"
+               "      breadCrumbScrollToEnd();\n"
+               "      // MrDesk custom (item 28): trocou de pasta com o mouse nesta lista ->\n"
+               "      // foco do teclado volta pra lista (busca por nome, Enter, Backspace).\n"
+               "      final escopo = isLocal ? MouseFocusScope.local : MouseFocusScope.remote;\n"
+               "      if (widget._mouseFocusScope.value == escopo) _mrdeskFocarLista();\n"
+               "    });\n"),
+              ("  SelectedItems get selectedItems => controller.selectedItems;\n",
+               "  SelectedItems get selectedItems => controller.selectedItems;\n\n"
+               "  // MrDesk custom (item 28): devolve o foco do teclado pra lista de arquivos\n"
+               "  // (menos se o usuario esta digitando no campo do caminho/pesquisa).\n"
+               "  void _mrdeskFocarLista() {\n"
+               "    WidgetsBinding.instance.addPostFrameCallback((_) {\n"
+               "      if (mounted && !_locationNode.hasFocus) _keyboardNode.requestFocus();\n"
+               "    });\n"
+               "  }\n"),
               ("  final _listSearchBuffer = TimeoutStringBuffer();\n",
                "  final _listSearchBuffer = TimeoutStringBuffer();\n"
                "  Entry? _mrdeskAchadoBusca; // MrDesk custom (item 28): ultimo item achado pela busca\n"),
