@@ -231,6 +231,11 @@ def generate_custom_client(params, full_url):
     # por padrao (o ajuste por ID as vezes se perde; ver estado-atual.md).
     if filename.strip().lower() == 'mrdeskpro':
         decodedCustom['default-settings']['view_style'] = 'adaptive'
+        # MrDesk custom (02/10): o catalogo de enderecos do MrDeskPro vem do painel
+        # (somente leitura). "Sincronizar com sessoes recentes" tentava gravar no
+        # servidor, acrescentava os recentes e trocava cliente/apelido pelo
+        # usuario/computador na lista local. Fica travado em desligado.
+        decodedCustom['override-settings']['sync-ab-with-recent-sessions'] = 'N'
 
     if permissionsDorO == "default":
         decodedCustom['default-settings']['access-mode'] = permissionsType
