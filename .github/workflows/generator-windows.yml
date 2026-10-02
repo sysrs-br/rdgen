@@ -566,6 +566,9 @@ jobs:
           #     lista antiga depois de trocar de pasta, ate clicar em alguma linha);
           #     se o texto digitado nao acha nada, recomeca da ultima letra; Esc zera.
           #     Depois de trocar de pasta o foco do teclado volta pra lista.
+          #     Setas pra cima/baixo andam na lista (sem selecao: vai pro primeiro item).
+          #     A ultima pasta e gravada a cada troca de pasta (antes so ao fechar: com
+          #     a janela fechando, a do lado remoto nao chegava a ser gravada).
           #     Lado remoto volta pra ultima pasta usada (a pasta inicial que o remoto
           #     manda ao conectar nao tem mais preferencia sobre a guardada; se a guardada
           #     nao existir, abre a do usuario).
@@ -575,35 +578,85 @@ jobs:
               ("import 'package:flutter/material.dart';\n",
                "import 'package:flutter/material.dart';\nimport 'package:flutter/services.dart';\n"),
               ("  final Function(String) onSearch;\n",
-               "  final Function(String) onSearch;\n  final Function()? onEnter; // MrDesk custom (item 28)\n  final Function()? onBackspace; // MrDesk custom (item 28)\n  final Function()? onEscape; // MrDesk custom (item 28)\n"),
+               "  final Function(String) onSearch;\n  final Function()? onEnter; // MrDesk custom (item 28)\n  final Function()? onBackspace; // MrDesk custom (item 28)\n  final Function()? onEscape; // MrDesk custom (item 28)\n  final Function(int)? onArrow; // MrDesk custom (item 28)\n"),
               ("      required this.onSearch});\n",
-               "      required this.onSearch,\n      this.onEnter,\n      this.onBackspace,\n      this.onEscape});\n"),
-              ("        onKeyEvent: (kv) {\n",
+               "      required this.onSearch,\n      this.onEnter,\n      this.onBackspace,\n      this.onEscape,\n      this.onArrow});\n"),
+              ("    return KeyboardListener(\n"
+               "        autofocus: true,\n"
                "        onKeyEvent: (kv) {\n"
-               "          // MrDesk custom (item 28): Enter entra na pasta, Backspace volta.\n"
-               "          if (kv.logicalKey == LogicalKeyboardKey.enter ||\n"
-               "              kv.logicalKey == LogicalKeyboardKey.numpadEnter) {\n"
-               "            if (kv is KeyDownEvent && onEnter != null) {\n"
+               "          final ch = kv.character;\n"
+               "          if (ch == null) {\n"
+               "            return;\n"
+               "          }\n"
+               "          final action = buffer.input(ch);\n"
+               "          switch (action) {\n"
+               "            case ListSearchAction.search:\n"
+               "              onSearch(buffer.buffer);\n"
+               "              break;\n"
+               "            case ListSearchAction.next:\n"
+               "              onNext(buffer.buffer);\n"
+               "              break;\n"
+               "          }\n"
+               "        },\n"
+               "        focusNode: node,\n"
+               "        child: child);\n",
+               "    // MrDesk custom (item 28): Focus no lugar de KeyboardListener pra poder\n"
+               "    // consumir Enter, Backspace, Esc e as setas (senao as setas tiram o foco\n"
+               "    // da lista).\n"
+               "    return Focus(\n"
+               "        autofocus: true,\n"
+               "        focusNode: node,\n"
+               "        onKeyEvent: (_, kv) {\n"
+               "          final tecla = kv.logicalKey;\n"
+               "          if (tecla == LogicalKeyboardKey.enter ||\n"
+               "              tecla == LogicalKeyboardKey.numpadEnter) {\n"
+               "            if (onEnter == null) return KeyEventResult.ignored;\n"
+               "            if (kv is KeyDownEvent) {\n"
                "              buffer.clear();\n"
                "              onEnter!();\n"
                "            }\n"
-               "            return;\n"
+               "            return KeyEventResult.handled;\n"
                "          }\n"
-               "          if (kv.logicalKey == LogicalKeyboardKey.backspace) {\n"
-               "            if (kv is! KeyUpEvent && onBackspace != null) {\n"
+               "          if (tecla == LogicalKeyboardKey.backspace) {\n"
+               "            if (onBackspace == null) return KeyEventResult.ignored;\n"
+               "            if (kv is! KeyUpEvent) {\n"
                "              buffer.clear();\n"
                "              onBackspace!();\n"
                "            }\n"
-               "            return;\n"
+               "            return KeyEventResult.handled;\n"
                "          }\n"
-               "          // Esc zera a busca por nome.\n"
-               "          if (kv.logicalKey == LogicalKeyboardKey.escape) {\n"
+               "          if (tecla == LogicalKeyboardKey.escape) {\n"
                "            if (kv is KeyDownEvent) {\n"
                "              buffer.clear();\n"
                "              if (onEscape != null) onEscape!();\n"
                "            }\n"
-               "            return;\n"
-               "          }\n"),
+               "            return KeyEventResult.ignored;\n"
+               "          }\n"
+               "          if (tecla == LogicalKeyboardKey.arrowDown ||\n"
+               "              tecla == LogicalKeyboardKey.arrowUp) {\n"
+               "            if (onArrow == null) return KeyEventResult.ignored;\n"
+               "            if (kv is! KeyUpEvent) {\n"
+               "              buffer.clear();\n"
+               "              onArrow!(tecla == LogicalKeyboardKey.arrowDown ? 1 : -1);\n"
+               "            }\n"
+               "            return KeyEventResult.handled;\n"
+               "          }\n"
+               "          final ch = kv.character;\n"
+               "          if (ch == null) {\n"
+               "            return KeyEventResult.ignored;\n"
+               "          }\n"
+               "          final action = buffer.input(ch);\n"
+               "          switch (action) {\n"
+               "            case ListSearchAction.search:\n"
+               "              onSearch(buffer.buffer);\n"
+               "              break;\n"
+               "            case ListSearchAction.next:\n"
+               "              onNext(buffer.buffer);\n"
+               "              break;\n"
+               "          }\n"
+               "          return KeyEventResult.ignored;\n"
+               "        },\n"
+               "        child: child);\n"),
               ("  String get buffer => _buffer;\n",
                "  String get buffer => _buffer;\n\n"
                "  // MrDesk custom (item 28): recomeca a busca por nome (ex.: depois de entrar na pasta).\n"
@@ -654,6 +707,37 @@ jobs:
                "      onEscape: () {\n"
                "        _mrdeskAchadoBusca = null;\n"
                "        selectedItems.clear();\n"
+               "      },\n"
+               "      // MrDesk custom (item 28): setas andam na lista; sem selecao, vai pro primeiro.\n"
+               "      onArrow: (int delta) {\n"
+               "        final todos = controller.directory.value.entries;\n"
+               "        final lista = _searchText.isNotEmpty\n"
+               "            ? todos.where((e) => e.name.contains(_searchText.value)).toList()\n"
+               "            : todos;\n"
+               "        if (lista.isEmpty) return;\n"
+               "        final Entry? atual = selectedItems.items.isNotEmpty\n"
+               "            ? selectedItems.items.last\n"
+               "            : _mrdeskAchadoBusca;\n"
+               "        var index = atual == null ? -1 : lista.indexOf(atual);\n"
+               "        index = index < 0\n"
+               "            ? 0\n"
+               "            : (index + delta).clamp(0, lista.length - 1).toInt();\n"
+               "        final entry = lista[index];\n"
+               "        selectedItems.clear();\n"
+               "        selectedItems.add(entry);\n"
+               "        _mrdeskAchadoBusca = entry;\n"
+               "        if (scrollController.hasClients) {\n"
+               "          final pos = scrollController.position;\n"
+               "          final topo = index * kDesktopFileTransferRowHeight;\n"
+               "          if (topo < pos.pixels) {\n"
+               "            scrollController.jumpTo(topo);\n"
+               "          } else if (topo + kDesktopFileTransferRowHeight >\n"
+               "              pos.pixels + pos.viewportDimension) {\n"
+               "            scrollController.jumpTo(min(\n"
+               "                pos.maxScrollExtent,\n"
+               "                topo + kDesktopFileTransferRowHeight - pos.viewportDimension));\n"
+               "          }\n"
+               "        }\n"
                "      },\n"),
               ("      onNext: (buffer) {\n",
                "      onNext: (buffer) {\n"
@@ -716,6 +800,24 @@ jobs:
                "        if (directory.value.path.isNotEmpty &&\n"
                "            directory.value.path != options.value.home)\n"
                "          directory.value.path,\n"),
+              ("      directory.value = fd;\n      return true;\n",
+               "      directory.value = fd;\n"
+               "      // MrDesk custom (item 28): grava a ultima pasta a cada troca (so ao fechar\n"
+               "      // nao bastava: com a janela fechando, a do lado remoto se perdia).\n"
+               "      if (_mrdeskPronto && fd.path.isNotEmpty) {\n"
+               "        unawaited(bind.sessionPeerOption(\n"
+               "            sessionId: sessionId,\n"
+               "            name: isLocal ? \"local_dir\" : \"remote_dir\",\n"
+               "            value: fd.path));\n"
+               "      }\n"
+               "      return true;\n"),
+              ("  Future<void> onReady() async {\n    if (isLocal) {\n",
+               "  // MrDesk custom (item 28): so grava a ultima pasta depois da abertura\n"
+               "  // inicial (senao a tentativa de abrir a home apagaria a pasta guardada).\n"
+               "  bool _mrdeskPronto = false;\n\n"
+               "  Future<void> onReady() async {\n    _mrdeskPronto = false;\n    if (isLocal) {\n"),
+              ("      await tryOpenReadyDirs();\n    }\n  }\n",
+               "      await tryOpenReadyDirs();\n    }\n    _mrdeskPronto = true; // MrDesk custom (item 28)\n  }\n"),
               ("        debugPrint(\"init remote home: ${fd.path}\");\n        directory.value = fd;\n",
                "        debugPrint(\"init remote home: ${fd.path}\");\n"
                "        // MrDesk custom (item 28): nao troca a pasta se a guardada ja foi aberta.\n"
