@@ -424,6 +424,7 @@
         });
         document.getElementById("{{ form.logofile.id_for_label }}").addEventListener('change', function(event) {
             previewImage(event.target, 'logo-preview');
+            mostrarLogoPerfil();
         });
         document.getElementById("{{ form.privacyfile.id_for_label }}").addEventListener('change', function(event) {
             previewImage(event.target, 'privacy-preview');
@@ -453,6 +454,7 @@
             // MrDesk: configuracoes liberadas durante o acesso remoto (o servidor tambem forca isso)
             if (name === "mrdesk") document.getElementById("{{ form.enableRemoteModi.id_for_label }}").checked = true;
             mostrarIconePerfil();
+            mostrarLogoPerfil();
         }
         // Icone do perfil: sem arquivo escolhido, o servidor usa o icone guardado do
         // MrDesk/MrDeskPro. Aqui so mostra qual vai entrar no build.
@@ -464,6 +466,17 @@
             if (!mrdeskProfiles[name]) { quadro.innerHTML = ''; return; }
             quadro.innerHTML = '<img src="/icone_perfil?nome=' + name + '" style="max-height:60px;vertical-align:middle"> ' +
                 '<span>Icone do ' + name + ': entra sozinho no build (escolha um arquivo so pra trocar).</span>';
+        }
+        // Logo da empresa: mesma ideia do icone (o servidor usa o logo guardado quando
+        // nenhum arquivo e escolhido); o mesmo logo vale pros dois perfis.
+        function mostrarLogoPerfil() {
+            const name = document.getElementById("{{ form.exename.id_for_label }}").value.trim().toLowerCase();
+            const campo = document.getElementById("{{ form.logofile.id_for_label }}");
+            const quadro = document.getElementById("logo-preview");
+            if (campo.files && campo.files.length) return;
+            if (!mrdeskProfiles[name]) { quadro.innerHTML = ''; return; }
+            quadro.innerHTML = '<img src="/icone_perfil?nome=logo" style="max-height:60px;vertical-align:middle"> ' +
+                '<span>Logo da Sysrs: entra sozinho no build (escolha um arquivo so pra trocar).</span>';
         }
         document.getElementById("{{ form.exename.id_for_label }}").addEventListener('change', applyMrdeskProfile);
         applyMrdeskProfile();

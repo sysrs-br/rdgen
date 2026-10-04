@@ -180,7 +180,15 @@ def generate_custom_client(params, full_url):
         logofile = params.get('logofile')
         if not logofile:
             logofile = params.get('logobase64')
-        logolink_url, logolink_uuid, logolink_file = save_png(logofile,myuuid,full_url,"logo.png")
+        # MrDesk custom (04/10/2026): sem logo enviado no form, os perfis
+        # MrDesk/MrDeskPro usam o logo da Sysrs guardado em rdgenerator/icones/logo.png.
+        logo_padrao = MRDESK_ICONS_DIR / "logo.png"
+        if not logofile and filename.strip().lower() in MRDESK_PROFILES and logo_padrao.is_file():
+            Path("png/%s" % myuuid).mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(logo_padrao, "png/%s/logo.png" % myuuid)
+            logolink_url, logolink_uuid, logolink_file = full_url, myuuid, "logo.png"
+        else:
+            logolink_url, logolink_uuid, logolink_file = save_png(logofile,myuuid,full_url,"logo.png")
     except:
         print("failed to get logo")
         logolink_url = "false"
@@ -583,10 +591,11 @@ def get_png(request):
     return response
 
 def icone_perfil(request):
-    # MrDesk custom: icone guardado do perfil (mrdesk / mrdeskpro), pra mostrar no form.
+    # MrDesk custom: icone guardado do perfil (mrdesk / mrdeskpro) ou o logo da
+    # empresa ("logo"), pra mostrar no form.
     nome = request.GET.get('nome', '').strip().lower()
     arquivo = MRDESK_ICONS_DIR / ("%s.png" % nome)
-    if nome not in MRDESK_PROFILES or not arquivo.is_file():
+    if (nome not in MRDESK_PROFILES and nome != "logo") or not arquivo.is_file():
         from django.http import Http404
         raise Http404("Icone nao encontrado")
     return HttpResponse(arquivo.read_bytes(), content_type='image/png')
