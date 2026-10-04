@@ -1,3 +1,4 @@
+import shutil
 import io
 from pathlib import Path
 from django.http import HttpResponse, JsonResponse, HttpResponseForbidden
@@ -34,6 +35,8 @@ MRDESK_SERVER = "mrdesk.sysrs.com.br"
 MRDESK_SERVER_PORT = "21116"
 MRDESK_KEY = "WKEXHYiyfa3Z+tdn14WiausFHxLejv2TU8VajeV+vCU="
 MRDESK_API_SERVER = "https://mrdesk.sysrs.com.br"
+# Icones dos perfis (mrdesk.png e mrdeskpro.png), usados quando o form nao envia um.
+MRDESK_ICONS_DIR = Path(__file__).resolve().parent / "icones"
 
 
 def generate_custom_client(params, full_url):
@@ -159,7 +162,15 @@ def generate_custom_client(params, full_url):
         iconfile = params.get('iconfile')
         if not iconfile:
             iconfile = params.get('iconbase64')
-        iconlink_url, iconlink_uuid, iconlink_file = save_png(iconfile,myuuid,full_url,"icon.png")
+        # MrDesk custom (04/10/2026): sem icone enviado no form, os perfis
+        # MrDesk/MrDeskPro usam o icone guardado em rdgenerator/icones/.
+        icone_padrao = MRDESK_ICONS_DIR / ("%s.png" % filename.strip().lower())
+        if not iconfile and filename.strip().lower() in MRDESK_PROFILES and icone_padrao.is_file():
+            Path("png/%s" % myuuid).mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(icone_padrao, "png/%s/icon.png" % myuuid)
+            iconlink_url, iconlink_uuid, iconlink_file = full_url, myuuid, "icon.png"
+        else:
+            iconlink_url, iconlink_uuid, iconlink_file = save_png(iconfile,myuuid,full_url,"icon.png")
     except:
         print("failed to get icon, using default")
         iconlink_url = "false"
