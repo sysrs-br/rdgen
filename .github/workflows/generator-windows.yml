@@ -873,6 +873,412 @@ jobs:
           p.write_text(s)
           print("client.rs patched: conexao sem token de login pro hbbs (item 24)")
 
+          def mrdesk_troca(s, alvo, novo, onde):
+              if s.count(alvo) != 1:
+                  raise SystemExit("ERRO: trecho nao encontrado (ou repetido) em " + onde + " - atualize o patch 18.")
+              return s.replace(alvo, novo, 1)
+
+
+          # 18) (Item 6B) Cinco senhas permanentes, uma por numero de acesso.
+          #     O servidor da Sysrs informa, na consulta do tecnico (patch 8) e na lista
+          #     guardada (patch 10), o numero do acesso (1 a 5) da conta de quem conecta.
+          #     O MrDesk confere SO a senha permanente daquele numero. A senha 1 e a
+          #     senha permanente normal do RustDesk; as senhas 2 a 5 ficam no
+          #     LocalConfig do servico ("mrdesk-senha-N" = salt|resumo cifrado), com o
+          #     mesmo salt da senha 1 (o MrDeskPro nao muda: manda o mesmo calculo).
+          #     Alterar senha: so durante um acesso remoto autorizado, e so a senha do
+          #     numero de quem esta conectado (dois numeros ao mesmo tempo: recusa).
+          #     Sem acesso remoto: recusa. Temporaria e "Aceitar" continuam valendo.
+          #     Depende dos patches 8 e 10 (roda depois deles).
+          p = pathlib.Path("src/server/connection.rs")
+          s = p.read_text()
+          onde = "src/server/connection.rs"
+
+          # a consulta devolve o numero do acesso
+          s = mrdesk_troca(s, r'''enum MrdeskPermissao {
+              Permitida,
+          ''', r'''enum MrdeskPermissao {
+              Permitida(u8), // numero do acesso (1 a 5) - patch 18
+          ''', onde)
+          s = mrdesk_troca(s, r'''                MrdeskPermissao::Permitida => {}
+          ''', r'''                MrdeskPermissao::Permitida(mrdesk_acesso) => {
+                              // patch 18: guarda o numero do acesso desta conexao
+                              MRDESK_ACESSOS.lock().unwrap().insert(self.inner.id, mrdesk_acesso);
+                          }
+          ''', onde)
+          s = mrdesk_troca(s, r'''    let mut resposta: Option<bool> = None;
+          ''', r'''    let mut resposta: Option<bool> = None;
+              let mut acesso_servidor: u8 = 1;
+          ''', onde)
+          s = mrdesk_troca(s, r'''        let body = json!({ "id": Config::get_id(), "peer": peer_id }).to_string();
+          ''', r'''        // "senhas": 5 avisa o servidor que este MrDesk conhece as cinco senhas (patch 18)
+                  let body = json!({ "id": Config::get_id(), "peer": peer_id, "senhas": 5 }).to_string();
+          ''', onde)
+          s = mrdesk_troca(s, r'''            resposta = serde_json::from_str::<Value>(&texto)
+                          .ok()
+                          .and_then(|v| v.get("autorizado").and_then(|a| a.as_bool()));
+          ''', r'''            let v = serde_json::from_str::<Value>(&texto).ok();
+                      resposta = v
+                          .as_ref()
+                          .and_then(|v| v.get("autorizado").and_then(|a| a.as_bool()));
+                      acesso_servidor = v
+                          .as_ref()
+                          .and_then(|v| v.get("acesso").and_then(|a| a.as_u64()))
+                          .filter(|a| (1..=5).contains(a))
+                          .unwrap_or(1) as u8;
+          ''', onde)
+          s = mrdesk_troca(s, r'''            if autorizado {
+                          MrdeskPermissao::Permitida
+                      } else {
+          ''', r'''            if autorizado {
+                          MrdeskPermissao::Permitida(acesso_servidor)
+                      } else {
+          ''', onde)
+          s = mrdesk_troca(s, r'''            if crate::hbbs_http::sync::mrdesk_tecnico_na_lista(peer_id) {
+                          log::info!("MrDesk: servidor sem resposta, tecnico {} autorizado pela lista guardada", peer_id);
+                          MrdeskPermissao::Permitida
+                      } else {
+          ''', r'''            if let Some(acesso_lista) = crate::hbbs_http::sync::mrdesk_tecnico_na_lista(peer_id) {
+                          log::info!("MrDesk: servidor sem resposta, tecnico {} autorizado pela lista guardada", peer_id);
+                          MrdeskPermissao::Permitida(acesso_lista)
+                      } else {
+          ''', onde)
+
+          # recusa: mostra ao tecnico o texto que o servidor mandar ("mensagem"), se vier.
+          # Assim regras novas do servidor (ex.: limite de acessos simultaneos da conta)
+          # tem aviso proprio sem precisar de outro build.
+          s = mrdesk_troca(s, r'''    Bloqueada,
+              Falha,
+          }
+          ''', r'''    Bloqueada(String), // texto do servidor pro tecnico (vazio = mensagem padrao) - patch 18
+              Falha,
+          }
+          ''', onde)
+          s = mrdesk_troca(s, r'''                MrdeskPermissao::Bloqueada => {
+          ''', r'''                MrdeskPermissao::Bloqueada(mrdesk_msg) => {
+          ''', onde)
+          s = mrdesk_troca(s, r'''                    self.send_login_error(MRDESK_MSG_BLOQUEADA).await;
+          ''', r'''                    self.send_login_error(if mrdesk_msg.is_empty() {
+                                  MRDESK_MSG_BLOQUEADA.to_owned()
+                              } else {
+                                  mrdesk_msg
+                              })
+                              .await;
+          ''', onde)
+          s = mrdesk_troca(s, r'''    let mut acesso_servidor: u8 = 1;
+          ''', r'''    let mut acesso_servidor: u8 = 1;
+              let mut mensagem_servidor = String::new();
+          ''', onde)
+          s = mrdesk_troca(s, r'''                .unwrap_or(1) as u8;
+          ''', r'''                .unwrap_or(1) as u8;
+                      mensagem_servidor = v
+                          .as_ref()
+                          .and_then(|v| v.get("mensagem").and_then(|m| m.as_str()))
+                          .map(|m| m.chars().take(200).collect::<String>())
+                          .unwrap_or_default();
+          ''', onde)
+          s = mrdesk_troca(s, r'''            } else {
+                          MrdeskPermissao::Bloqueada
+                      }
+          ''', r'''            } else {
+                          MrdeskPermissao::Bloqueada(mensagem_servidor)
+                      }
+          ''', onde)
+
+          # confere so a senha do numero do acesso
+          s = mrdesk_troca(s, r'''                self.check_update_temporary_password(true);
+                          return true;
+                      }
+                  }
+                  if password::permanent_enabled() || allow_permanent_password {
+          ''', r'''                self.check_update_temporary_password(true);
+                          return true;
+                      }
+                  }
+                  // MrDesk custom (patch 18): acessos 2 a 5 conferem so a senha do proprio numero
+                  let mrdesk_acesso = mrdesk_acesso_da_conexao(self.inner.id);
+                  if mrdesk_acesso >= 2 {
+                      if password::permanent_enabled() || allow_permanent_password {
+                          if let Some(h1) = mrdesk_senha_h1(mrdesk_acesso, &self.hash.salt) {
+                              if self.verify_h1(&h1[..]) {
+                                  self.set_conn_audit_primary_auth(ConnAuditPrimaryAuth::PermanentPassword);
+                                  return true;
+                              }
+                          }
+                      }
+                      return false;
+                  }
+                  if password::permanent_enabled() || allow_permanent_password {
+          ''', onde)
+
+          # conexao encerrada: esquece o numero do acesso
+          s = mrdesk_troca(s, r'''            let mut active_conns_lock = ALIVE_CONNS.lock().unwrap();
+                      active_conns_lock.retain(|&c| c != self.0);
+          ''', r'''            let mut active_conns_lock = ALIVE_CONNS.lock().unwrap();
+                      active_conns_lock.retain(|&c| c != self.0);
+                      super::MRDESK_ACESSOS.lock().unwrap().remove(&self.0); // patch 18
+          ''', onde)
+
+          s += r'''
+
+          // ================================================================
+          // MrDesk custom (item 6B, patch 18): cinco senhas permanentes, uma por numero
+          // de acesso (1 a 5). O numero vem do servidor da Sysrs na consulta do tecnico.
+          // Senha 1 = senha permanente normal. Senhas 2 a 5 = LocalConfig do servico,
+          // chave "mrdesk-senha-N", valor "salt|resumo cifrado" (resumo = o mesmo h1
+          // da senha permanente, calculado com o mesmo salt).
+          // ================================================================
+          lazy_static::lazy_static! {
+              // conexao -> numero do acesso informado na consulta do tecnico
+              static ref MRDESK_ACESSOS: Arc<Mutex<HashMap<i32, u8>>> = Default::default();
+          }
+
+          const MRDESK_SENHA_CHAVE: &str = "mrdesk-senha-";
+
+          fn mrdesk_acesso_da_conexao(conn_id: i32) -> u8 {
+              MRDESK_ACESSOS
+                  .lock()
+                  .unwrap()
+                  .get(&conn_id)
+                  .copied()
+                  .unwrap_or(1)
+          }
+
+          // Numero do acesso remoto em andamento, pra saber qual senha pode ser alterada:
+          // "1" a "5"; "" = nenhum acesso autorizado (ou sem numero conhecido); "x" =
+          // acessos de numeros diferentes ao mesmo tempo.
+          pub fn mrdesk_acesso_senha() -> String {
+              let ids: Vec<i32> = AUTHED_CONNS
+                  .lock()
+                  .unwrap()
+                  .iter()
+                  .map(|c| c.conn_id)
+                  .collect();
+              if ids.is_empty() {
+                  return String::new();
+              }
+              let acessos = MRDESK_ACESSOS.lock().unwrap();
+              let mut nums: Vec<u8> = Vec::new();
+              for id in ids.iter() {
+                  match acessos.get(id) {
+                      Some(n) => nums.push(*n),
+                      None => return String::new(),
+                  }
+              }
+              nums.sort();
+              nums.dedup();
+              if nums.len() == 1 {
+                  nums[0].to_string()
+              } else {
+                  "x".to_owned()
+              }
+          }
+
+          fn mrdesk_senha_h1(acesso: u8, salt: &str) -> Option<Vec<u8>> {
+              let salvo = hbb_common::config::LocalConfig::get_option(&format!(
+                  "{}{}",
+                  MRDESK_SENHA_CHAVE, acesso
+              ));
+              let (salt_salvo, cifrado) = salvo.split_once('|')?;
+              // o MrDeskPro calcula com o salt que recebeu nesta conexao: tem de ser o mesmo
+              if salt_salvo.is_empty() || salt_salvo != salt {
+                  return None;
+              }
+              let (hexa, ok, _) = hbb_common::password_security::decrypt_str_or_original(cifrado, "00");
+              if !ok || hexa.len() != 64 {
+                  return None;
+              }
+              let mut h1 = Vec::with_capacity(32);
+              for i in (0..64).step_by(2) {
+                  h1.push(u8::from_str_radix(hexa.get(i..i + 2)?, 16).ok()?);
+              }
+              Some(h1)
+          }
+
+          // A senha do acesso em andamento esta definida? (usado pela tela)
+          pub fn mrdesk_tem_senha() -> bool {
+              match mrdesk_acesso_senha().parse::<u8>() {
+                  Ok(n) if n >= 2 => {
+                      mrdesk_senha_h1(n, &Config::get_effective_permanent_password_salt()).is_some()
+                  }
+                  _ => Config::has_permanent_password(),
+              }
+          }
+
+          // Grava (ou apaga, se vazia) a senha permanente do acesso em andamento.
+          // Sem acesso remoto autorizado, ou com acessos de numeros diferentes: recusa.
+          pub fn mrdesk_definir_senha(senha: &str) -> bool {
+              let acesso = match mrdesk_acesso_senha().parse::<u8>() {
+                  Ok(n) if (1..=5).contains(&n) => n,
+                  _ => {
+                      log::warn!("MrDesk: alteracao da senha permanente recusada (sem acesso remoto de um unico numero)");
+                      return false;
+                  }
+              };
+              if acesso == 1 {
+                  return Config::set_permanent_password(senha);
+              }
+              let chave = format!("{}{}", MRDESK_SENHA_CHAVE, acesso);
+              if senha.is_empty() {
+                  hbb_common::config::LocalConfig::set_option(chave, String::new());
+                  log::info!("MrDesk: senha permanente {} removida", acesso);
+                  return true;
+              }
+              let salt = Config::get_effective_permanent_password_salt();
+              if salt.is_empty() {
+                  return false;
+              }
+              let h1 = hbb_common::config::compute_permanent_password_h1(senha, &salt);
+              let hexa: String = h1.iter().map(|b| format!("{:02x}", b)).collect();
+              let cifrado = hbb_common::password_security::encrypt_str_or_original(&hexa, "00", 128);
+              if cifrado.is_empty() || cifrado == hexa {
+                  log::warn!("MrDesk: nao foi possivel cifrar a senha permanente {}", acesso);
+                  return false;
+              }
+              hbb_common::config::LocalConfig::set_option(chave, format!("{}|{}", salt, cifrado));
+              log::info!("MrDesk: senha permanente {} definida", acesso);
+              true
+          }
+          '''
+          p.write_text(s)
+
+          # lista guardada: os codigos passam a levar o numero do acesso
+          p = pathlib.Path("src/hbbs_http/sync.rs")
+          s = p.read_text()
+          onde = "src/hbbs_http/sync.rs"
+          s = mrdesk_troca(s, r'''    let body = json!({ "id": Config::get_id() }).to_string();
+          ''', r'''    // "senhas": 5 = lista no formato novo, com o numero do acesso (patch 18)
+              let body = json!({ "id": Config::get_id(), "senhas": 5 }).to_string();
+          ''', onde)
+          i = s.find("pub fn mrdesk_tecnico_na_lista(peer_id: &str) -> bool {")
+          fim = "    lista.iter().any(|x| x == &codigo)\n}\n"
+          j = s.find(fim, i)
+          if i < 0 or j < 0:
+              raise SystemExit("ERRO: mrdesk_tecnico_na_lista nao encontrada em src/hbbs_http/sync.rs - atualize o patch 18.")
+          s = s[:i] + r'''// Devolve o numero do acesso (1 a 5) se o tecnico esta na lista guardada.
+          // Formato novo: SHA-256 de "<ID deste MrDesk>:<ID do MrDeskPro>:<numero>".
+          // Lista baixada antes da 1.4.11 (sem o numero): so existia o acesso 1.
+          pub fn mrdesk_tecnico_na_lista(peer_id: &str) -> Option<u8> {
+              use sha2::{Digest, Sha256};
+              let (ts, lista) = mrdesk_lista_salva();
+              if ts == 0 || mrdesk_agora().saturating_sub(ts) >= MRDESK_LISTA_VALIDADE {
+                  return None;
+              }
+              let codigo = |texto: String| -> String {
+                  let mut h = Sha256::new();
+                  h.update(texto.as_bytes());
+                  h.finalize().iter().map(|b| format!("{:02x}", b)).collect()
+              };
+              for n in 1..=5u8 {
+                  let c = codigo(format!("{}:{}:{}", Config::get_id(), peer_id, n));
+                  if lista.iter().any(|x| x == &c) {
+                      return Some(n);
+                  }
+              }
+              let c = codigo(format!("{}:{}", Config::get_id(), peer_id));
+              if lista.iter().any(|x| x == &c) {
+                  return Some(1);
+              }
+              None
+          }
+          ''' + s[j + len(fim):]
+          p.write_text(s)
+
+          # servico: alterar/consultar a senha passa pelas funcoes do patch
+          p = pathlib.Path("src/ipc.rs")
+          s = p.read_text()
+          onde = "src/ipc.rs"
+          s = mrdesk_troca(s, r'''                        updated = Config::set_permanent_password(&value);
+          ''', r'''                        // MrDesk custom (patch 18): so a senha do acesso remoto em andamento
+                                  updated = crate::server::mrdesk_definir_senha(&value);
+          ''', onde)
+          s = mrdesk_troca(s, r'''                } else if name == "permanent-password-set" {
+                              value = Some(if Config::has_permanent_password() {
+          ''', r'''                } else if name == "mrdesk-senha-acesso" {
+                              // MrDesk custom (patch 18): numero da senha que pode ser alterada agora
+                              value = Some(crate::server::mrdesk_acesso_senha());
+                          } else if name == "permanent-password-set" {
+                              value = Some(if crate::server::mrdesk_tem_senha() {
+          ''', onde)
+          p.write_text(s)
+
+          p = pathlib.Path("src/flutter_ffi.rs")
+          s = p.read_text()
+          s = mrdesk_troca(s, r'''    } else if key == "permanent-password-set" {
+                  return ui_interface::is_permanent_password_set().to_string();
+          ''', r'''    } else if key == "mrdesk-senha-acesso" {
+                  // MrDesk custom (patch 18): numero da senha permanente que pode ser alterada agora
+                  return crate::ipc::get_config("mrdesk-senha-acesso")
+                      .ok()
+                      .flatten()
+                      .unwrap_or_default();
+              } else if key == "permanent-password-set" {
+                  return ui_interface::is_permanent_password_set().to_string();
+          ''', "src/flutter_ffi.rs")
+          p.write_text(s)
+
+          # tela "Definir senha": mostra qual senha (1 a 5) esta sendo alterada
+          p = pathlib.Path("flutter/lib/desktop/pages/desktop_home_page.dart")
+          s = p.read_text()
+          onde = "flutter/lib/desktop/pages/desktop_home_page.dart"
+          s = mrdesk_troca(s, r'''  final localPasswordSet =
+                (await bind.mainGetCommon(key: "local-permanent-password-set")) == "true";
+            final permanentPasswordSet =
+                (await bind.mainGetCommon(key: "permanent-password-set")) == "true";
+          ''', r'''  // MrDesk custom (patch 18): a senha so muda durante um acesso remoto, e so a
+            // do numero do acesso conectado (1 a 5), que aparece no titulo e no campo.
+            final mrdeskAcesso = (await bind.mainGetCommon(key: "mrdesk-senha-acesso")).trim();
+            if (!["1", "2", "3", "4", "5"].contains(mrdeskAcesso)) {
+              showToast(
+                  mrdeskAcesso == "x"
+                      ? "H\u00e1 acessos remotos de contas diferentes ao mesmo tempo: a senha n\u00e3o pode ser alterada agora."
+                      : "A senha permanente s\u00f3 pode ser alterada durante um acesso remoto do t\u00e9cnico.",
+                  timeout: const Duration(seconds: 6));
+              return;
+            }
+            final permanentPasswordSet =
+                (await bind.mainGetCommon(key: "permanent-password-set")) == "true";
+            final localPasswordSet = mrdeskAcesso == "1"
+                ? (await bind.mainGetCommon(key: "local-permanent-password-set")) == "true"
+                : permanentPasswordSet;
+          ''', onde)
+          s = mrdesk_troca(s, r'''          Text(translate("Set Password")).paddingOnly(left: 10),
+          ''', r'''          Text('${translate("Set Password")} $mrdeskAcesso').paddingOnly(left: 10),
+          ''', onde)
+          s = mrdesk_troca(s, r'''                        labelText: translate('Password'),
+                                  errorText: errMsg0.isNotEmpty ? errMsg0 : null),
+          ''', r'''                        labelText: '${translate('Password')} $mrdeskAcesso',
+                                  errorText: errMsg0.isNotEmpty ? errMsg0 : null),
+          ''', onde)
+          p.write_text(s)
+          print("connection.rs/sync.rs/ipc.rs/flutter patched: cinco senhas permanentes por numero de acesso (item 6B)")
+
+          # 19) (Item 41) Link "Esqueci minha senha" na tela de login do MrDeskPro: abre
+          #     o navegador na pagina do painel que envia o link de senha por e-mail.
+          p = pathlib.Path("flutter/lib/common/widgets/login.dart")
+          s = p.read_text()
+          s = mrdesk_troca(s, r'''                              : null,
+                              )),
+                        ),
+                      ])),
+                    ],
+                  ));
+          ''', r'''                              : null,
+                              )),
+                        ),
+                      ])),
+                      // MrDesk custom (patch 19): esqueci minha senha
+                      TextButton(
+                        onPressed: () => launchUrl(
+                            Uri.parse('https://mrdesk.sysrs.com.br/?esqueci=1')),
+                        child: Text('Esqueci minha senha'),
+                      ).marginOnly(top: 6),
+                    ],
+                  ));
+          ''', "flutter/lib/common/widgets/login.dart")
+          p.write_text(s)
+          print("login.dart patched: link Esqueci minha senha (item 41)")
+
           # 9) Versao propria do MrDesk (decisao do Celso em 30/09/2026). Melhoria nossa
           #    sem versao nova do RustDesk nao chegava aos clientes pela atualizacao
           #    automatica (versao igual). A cada build que deva ser distribuido, aumentar
@@ -880,7 +1286,7 @@ jobs:
           #    (ProductVersion, que o servidor le), pro crate::VERSION (que o cliente
           #    compara) e pro Flutter. Ao trocar a versao do RustDesk, conferir BASE.
           MRDESK_BASE = "1.4.9"
-          MRDESK_VERSAO = "1.4.10"
+          MRDESK_VERSAO = "1.4.11"
           import re
           p = pathlib.Path("Cargo.toml")
           s = p.read_text()
