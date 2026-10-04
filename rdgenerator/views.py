@@ -582,6 +582,15 @@ def get_png(request):
 
     return response
 
+def icone_perfil(request):
+    # MrDesk custom: icone guardado do perfil (mrdesk / mrdeskpro), pra mostrar no form.
+    nome = request.GET.get('nome', '').strip().lower()
+    arquivo = MRDESK_ICONS_DIR / ("%s.png" % nome)
+    if nome not in MRDESK_PROFILES or not arquivo.is_file():
+        from django.http import Http404
+        raise Http404("Icone nao encontrado")
+    return HttpResponse(arquivo.read_bytes(), content_type='image/png')
+
 def create_github_run(myuuid):
     new_github_run = GithubRun(
         uuid=myuuid,
