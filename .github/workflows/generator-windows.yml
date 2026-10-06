@@ -137,6 +137,15 @@ jobs:
           repository: rustdesk/rustdesk
           submodules: recursive
 
+      - name: Set time zone to Brasilia (MrDesk custom - build date in local time)
+        shell: cmd
+        run: |
+          rem A "Data da Build" do programa vem do relogio local da maquina que compila
+          rem (chrono::Local em libs/hbb_common). O runner do GitHub fica em UTC e a
+          rem data saia 3 horas adiantada.
+          tzutil /s "E. South America Standard Time"
+          tzutil /g
+
       - name: Restore bridge files
         uses: actions/download-artifact@master
         with:
@@ -231,6 +240,85 @@ jobs:
           s = s[:target_idx] + insertion + s[target_idx:]
           p.write_text(s)
           print("windows.rs patched: 'sc description' adicionado ao get_create_service()")
+          PYEOF
+
+      - name: patch windows.rs - service recovery and keep delayed start (MrDesk custom, patch 20)
+        shell: bash
+        run: |
+          python3 - <<'PYEOF'
+          # Patch 20 (06/10/2026, pedido do Celso): servico do MrDesk no Windows.
+          #  a) Reinicio automatico se o servico cair: 5 tentativas com 1 minuto
+          #     de intervalo, depois para ("sc failure"). Aplicado ao criar o servico (instalar)
+          #     e tambem na atualizacao automatica (update_me), pra chegar nas
+          #     maquinas ja instaladas.
+          #  b) Maquina lenta em que o inicio do servico foi posto a mao em
+          #     "automatico (atrasado)" ("sc config MrDesk start= delayed-auto"):
+          #     reinstalar por cima apaga e recria o servico e perdia o ajuste.
+          #     Agora o instalador ve o ajuste antes de apagar e reaplica depois de
+          #     criar. A atualizacao automatica nao recria o servico (so para,
+          #     troca os arquivos e inicia), entao la o ajuste ja era mantido.
+          # O padrao continua "automatico" (sem atraso) pra todo mundo.
+          import pathlib
+          p = pathlib.Path("src/platform/windows.rs")
+          s = p.read_text()
+
+          def erro(o_que):
+              raise SystemExit(
+                  "ERRO: " + o_que + " nao encontrado em src/platform/windows.rs (patch 20) - "
+                  "o RustDesk oficial pode ter mudado. Atualize o patch em generator-windows.yml."
+              )
+
+          # 5 tentativas com 1 minuto de intervalo e para: a 6a acao e "nenhuma"
+          # (""), senao o Windows repetiria a ultima pra sempre. A contagem zera
+          # depois de 1 dia sem falha (reset= 86400).
+          falha = (
+              "sc failure {app_name} reset= 86400 actions= "
+              "restart/60000/restart/60000/restart/60000/restart/60000/restart/60000/"
+              r'\"\"/0'
+              "\n"
+          )
+
+          # 1) antes de apagar o servico (instalar por cima / desinstalar): guarda
+          #    se o inicio estava em "atrasado"
+          fn_idx = s.find("fn get_before_uninstall(kill_self: bool) -> String {")
+          if fn_idx == -1:
+              erro("funcao get_before_uninstall")
+          alvo = "    sc stop {app_name}\n    sc delete {app_name}\n"
+          i = s.find(alvo, fn_idx)
+          if i == -1 or i - fn_idx > 1200:
+              erro("'sc stop' + 'sc delete' em get_before_uninstall")
+          guarda = (
+              "    set MRDESK_ATRASADO=\n"
+              r'    reg query HKLM\\SYSTEM\\CurrentControlSet\\Services\\{app_name} /v DelayedAutostart 2>nul | findstr /C:\"0x1\" >nul && set MRDESK_ATRASADO=1'
+              "\n"
+          )
+          s = s[:i] + guarda + s[i:]
+
+          # 2) ao criar o servico: reinicio em caso de falha e, se estava em
+          #    "atrasado", volta a ficar
+          fn_idx = s.find("fn get_create_service(exe: &str) -> String {")
+          if fn_idx == -1:
+              erro("funcao get_create_service")
+          alvo = "sc start {app_name}"
+          i = s.find(alvo, fn_idx)
+          if i == -1 or i - fn_idx > 1500:
+              erro("'sc start' em get_create_service")
+          s = s[:i] + falha + "if defined MRDESK_ATRASADO sc config {app_name} start= delayed-auto\n" + s[i:]
+
+          # 3) atualizacao automatica: aplica o reinicio em caso de falha nas
+          #    maquinas ja instaladas (o servico nao e recriado aqui)
+          fn_idx = s.find("pub fn update_me(debug: bool) -> ResultType<()> {")
+          if fn_idx == -1:
+              erro("funcao update_me")
+          alvo = "{remove_meta_toml}\n{restore_service_cmd}\n"
+          i = s.find(alvo, fn_idx)
+          if i == -1:
+              erro("'{remove_meta_toml}' + '{restore_service_cmd}' em update_me")
+          i += len("{remove_meta_toml}\n")
+          s = s[:i] + falha + s[i:]
+
+          p.write_text(s)
+          print("windows.rs patched: reinicio do servico em caso de falha e inicio atrasado mantido (patch 20)")
           PYEOF
 
       - name: patch ui_cm_interface.rs to allow Elevate even when installed as service (MrDesk custom - TESTE)
@@ -1286,7 +1374,7 @@ jobs:
           #    (ProductVersion, que o servidor le), pro crate::VERSION (que o cliente
           #    compara) e pro Flutter. Ao trocar a versao do RustDesk, conferir BASE.
           MRDESK_BASE = "1.4.9"
-          MRDESK_VERSAO = "1.4.11"
+          MRDESK_VERSAO = "1.4.12"
           import re
           p = pathlib.Path("Cargo.toml")
           s = p.read_text()
