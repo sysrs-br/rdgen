@@ -19,16 +19,26 @@ from .models import GithubRun
 from PIL import Image
 from urllib.parse import quote
 
-# MrDesk custom: nome do EXE (minusculo) -> Connection Type obrigatorio.
+# MRDesk custom: nome do EXE (minusculo) -> Connection Type obrigatorio.
 # mrdesk    = client dos clientes (so recebe conexao)
 # mrdeskpro = client do tecnico (acessa e recebe)
 MRDESK_PROFILES = {
     "mrdesk": "incoming",
     "mrdeskpro": "both",
 }
+# Nome oficial de cada perfil (06/10/2026): padrao dos sistemas da Sysrs (MR1,
+# MRMobile) - "MRDesk" e "MRDeskPro", com MR maiusculo. O nome digitado no
+# form so escolhe o perfil (sem diferenciar maiusculas); o App Name e o nome
+# do exe saem sempre com esta grafia. Ate a 1.4.11 era "Mr" + "Desk" (r minusculo):
+# no Windows pasta, servico e registro nao diferenciam maiusculas, entao a
+# atualizacao cai em cima da mesma instalacao.
+MRDESK_NOMES = {
+    "mrdesk": "MRDesk",
+    "mrdeskpro": "MRDeskPro",
+}
 # Exes de atualizacao servidos pela VM Oracle (Nginx, /opt/mrdesk-suporte/updates/).
 MRDESK_DOWNLOAD_BASE = "https://mrdesk.sysrs.com.br/updates/"
-# Servidor da Sysrs, forcado nos perfis MrDesk/MrDeskPro (01/10/2026): com o
+# Servidor da Sysrs, forcado nos perfis MRDesk/MRDeskPro (01/10/2026): com o
 # campo do servidor vazio o gerador usava o servidor publico do RustDesk e o
 # exe saia sem o nosso servidor, sem avisar. A chave e publica (vai em todo exe).
 MRDESK_SERVER = "mrdesk.sysrs.com.br"
@@ -85,11 +95,11 @@ def generate_custom_client(params, full_url):
     if not appname:
         appname = "rustdesk"
     filename = params.get('exename', 'rustdesk')
-    # MrDesk custom: os dois builds oficiais se definem pelo nome do EXE.
+    # MRDesk custom: os dois builds oficiais se definem pelo nome do EXE.
     # O Connection Type, o App Name e o link de update sao forcados de acordo com o nome,
-    # pra nunca sair um MrDeskPro que baixa o mrdesk.exe (ou vice-versa).
+    # pra nunca sair um MRDeskPro que baixa o mrdesk.exe (ou vice-versa).
     mrdesk_profile = MRDESK_PROFILES.get(filename.strip().lower())
-    # Atualizacao silenciosa: so no MrDesk dos clientes. No MrDeskPro (tecnico)
+    # Atualizacao silenciosa: so no MRDesk dos clientes. No MRDeskPro (tecnico)
     # fica so o aviso na tela, e o tecnico escolhe quando atualizar.
     auto_update = 'N' if filename.strip().lower() == 'mrdeskpro' else 'Y'
     # Windows 32 bits: usa a interface antiga (Sciter) e NAO tem os nossos patches
@@ -104,8 +114,9 @@ def generate_custom_client(params, full_url):
         serverPort = MRDESK_SERVER_PORT
         key = MRDESK_KEY
         apiServer = MRDESK_API_SERVER
-        appname = filename.strip()
-        downloadLink = MRDESK_DOWNLOAD_BASE + filename.strip().lower() + ".exe"
+        filename = MRDESK_NOMES[filename.strip().lower()]
+        appname = filename
+        downloadLink = MRDESK_DOWNLOAD_BASE + filename.lower() + ".exe"
     compname = params.get('compname', '')
     if not compname:
         compname = "Purslane Ltd"
@@ -131,15 +142,15 @@ def generate_custom_client(params, full_url):
     enableRecording = params.get('enableRecording', True)
     enableBlockingInput = params.get('enableBlockingInput', True)
     enableRemoteModi = params.get('enableRemoteModi', False)
-    # MrDesk custom: no MrDesk dos clientes o tecnico conectado precisa poder
+    # MRDesk custom: no MRDesk dos clientes o tecnico conectado precisa poder
     # mexer nas configuracoes (ex.: trocar servidor/senha) - sem isso elas ficam
     # travadas durante o acesso remoto. Com o controle de tecnicos (6A), so
     # tecnico autorizado conecta.
     if filename.strip().lower() == 'mrdesk':
         enableRemoteModi = True
     hideStopService = params.get('hideStopService', True)
-    # MrDesk custom: "Parar servico" (icone da bandeja e Configuracoes) so aparece
-    # no MrDeskPro (tecnico); no MrDesk dos clientes fica sempre escondido.
+    # MRDesk custom: "Parar servico" (icone da bandeja e Configuracoes) so aparece
+    # no MRDeskPro (tecnico); no MRDesk dos clientes fica sempre escondido.
     if mrdesk_profile:
         hideStopService = filename.strip().lower() != 'mrdeskpro'
     removeWallpaper = params.get('removeWallpaper', True)
@@ -162,8 +173,8 @@ def generate_custom_client(params, full_url):
         iconfile = params.get('iconfile')
         if not iconfile:
             iconfile = params.get('iconbase64')
-        # MrDesk custom (04/10/2026): sem icone enviado no form, os perfis
-        # MrDesk/MrDeskPro usam o icone guardado em rdgenerator/icones/.
+        # MRDesk custom (04/10/2026): sem icone enviado no form, os perfis
+        # MRDesk/MRDeskPro usam o icone guardado em rdgenerator/icones/.
         icone_padrao = MRDESK_ICONS_DIR / ("%s.png" % filename.strip().lower())
         if not iconfile and filename.strip().lower() in MRDESK_PROFILES and icone_padrao.is_file():
             Path("png/%s" % myuuid).mkdir(parents=True, exist_ok=True)
@@ -180,8 +191,8 @@ def generate_custom_client(params, full_url):
         logofile = params.get('logofile')
         if not logofile:
             logofile = params.get('logobase64')
-        # MrDesk custom (04/10/2026): sem logo enviado no form, os perfis
-        # MrDesk/MrDeskPro usam o logo da Sysrs guardado em rdgenerator/icones/logo.png.
+        # MRDesk custom (04/10/2026): sem logo enviado no form, os perfis
+        # MRDesk/MRDeskPro usam o logo da Sysrs guardado em rdgenerator/icones/logo.png.
         logo_padrao = MRDESK_ICONS_DIR / "logo.png"
         if not logofile and filename.strip().lower() in MRDESK_PROFILES and logo_padrao.is_file():
             Path("png/%s" % myuuid).mkdir(parents=True, exist_ok=True)
@@ -215,14 +226,14 @@ def generate_custom_client(params, full_url):
         decodedCustom['disable-settings'] = 'Y'
     if account == "accountN":
         decodedCustom['disable-account'] = 'Y'
-    # MrDesk custom (item 24): login (catalogo de enderecos do painel) so no
-    # MrDeskPro; no MrDesk dos clientes fica sempre desligado.
+    # MRDesk custom (item 24): login (catalogo de enderecos do painel) so no
+    # MRDeskPro; no MRDesk dos clientes fica sempre desligado.
     if mrdesk_profile:
         if filename.strip().lower() == 'mrdeskpro':
             decodedCustom.pop('disable-account', None)
         else:
             decodedCustom['disable-account'] = 'Y'
-    # MrDesk custom: ninguem troca o ID (nem cliente nem tecnico). O painel e a
+    # MRDesk custom: ninguem troca o ID (nem cliente nem tecnico). O painel e a
     # lista de tecnicos autorizados dependem do ID; tira o botao "Change ID".
     if appname.upper != "rustdesk".upper and appname != "":
         decodedCustom['app-name'] = appname
@@ -249,11 +260,11 @@ def generate_custom_client(params, full_url):
     decodedCustom['enable-lan-discovery'] = 'N' if denyLan else 'Y'
     #decodedCustom['direct-server'] = 'Y' if enableDirectIP else 'N'
     decodedCustom['allow-auto-disconnect'] = 'Y' if autoClose else 'N'
-    # MrDesk custom (item 26): no MrDeskPro, toda sessao abre em "escala adaptada"
+    # MRDesk custom (item 26): no MRDeskPro, toda sessao abre em "escala adaptada"
     # por padrao (o ajuste por ID as vezes se perde; ver estado-atual.md).
     if filename.strip().lower() == 'mrdeskpro':
         decodedCustom['default-settings']['view_style'] = 'adaptive'
-        # MrDesk custom (02/10): o catalogo de enderecos do MrDeskPro vem do painel
+        # MRDesk custom (02/10): o catalogo de enderecos do MRDeskPro vem do painel
         # (somente leitura). "Sincronizar com sessoes recentes" tentava gravar no
         # servidor, acrescentava os recentes e trocava cliente/apelido pelo
         # usuario/computador na lista local. Fica travado em desligado.
@@ -591,7 +602,7 @@ def get_png(request):
     return response
 
 def icone_perfil(request):
-    # MrDesk custom: icone guardado do perfil (mrdesk / mrdeskpro) ou o logo da
+    # MRDesk custom: icone guardado do perfil (mrdesk / mrdeskpro) ou o logo da
     # empresa ("logo"), pra mostrar no form.
     nome = request.GET.get('nome', '').strip().lower()
     arquivo = MRDESK_ICONS_DIR / ("%s.png" % nome)

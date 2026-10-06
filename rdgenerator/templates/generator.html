@@ -430,7 +430,7 @@
             previewImage(event.target, 'privacy-preview');
         });
 
-        // MrDesk custom: o nome do EXE define o Connection Type, o App Name, o link de update
+        // MRDesk custom: o nome do EXE define o Connection Type, o App Name, o link de update
         // e o "Parar servico" (o servidor tambem forca isso ao gerar; aqui e so pra mostrar na tela).
         // Windows 32 bits: o servidor desliga atualizacao automatica e aviso de versao nova.
         const mrdeskProfiles = { "mrdesk": "incoming", "mrdeskpro": "both" };
@@ -449,15 +449,15 @@
             document.getElementById("{{ form.serverPort.id_for_label }}").value = "21116";
             document.getElementById("{{ form.key.id_for_label }}").value = "WKEXHYiyfa3Z+tdn14WiausFHxLejv2TU8VajeV+vCU=";
             document.getElementById("{{ form.apiServer.id_for_label }}").value = "https://mrdesk.sysrs.com.br";
-            // "Parar servico" so no MrDeskPro (o servidor tambem forca isso)
+            // "Parar servico" so no MRDeskPro (o servidor tambem forca isso)
             document.getElementById("{{ form.hideStopService.id_for_label }}").checked = (name !== "mrdeskpro");
-            // MrDesk: configuracoes liberadas durante o acesso remoto (o servidor tambem forca isso)
+            // MRDesk: configuracoes liberadas durante o acesso remoto (o servidor tambem forca isso)
             if (name === "mrdesk") document.getElementById("{{ form.enableRemoteModi.id_for_label }}").checked = true;
             mostrarIconePerfil();
             mostrarLogoPerfil();
         }
         // Icone do perfil: sem arquivo escolhido, o servidor usa o icone guardado do
-        // MrDesk/MrDeskPro. Aqui so mostra qual vai entrar no build.
+        // MRDesk/MRDeskPro. Aqui so mostra qual vai entrar no build.
         function mostrarIconePerfil() {
             const name = document.getElementById("{{ form.exename.id_for_label }}").value.trim().toLowerCase();
             const campo = document.getElementById("{{ form.iconfile.id_for_label }}");
