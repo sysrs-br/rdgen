@@ -125,10 +125,1346 @@ jobs:
           repository: rustdesk/rustdesk
           submodules: recursive
 
+      - name: Set time zone to Brasilia (MrDesk custom - build date in local time)
+        shell: cmd
+        run: |
+          rem A "Data da Build" do programa vem do relogio local da maquina que compila
+          rem (chrono::Local em libs/hbb_common). O runner do GitHub fica em UTC e a
+          rem data saia 3 horas adiantada.
+          tzutil /s "E. South America Standard Time"
+          tzutil /g
+
       - name: Install ImageMagick on Windows
         run: |
           choco install -y imagemagick.app --no-progress
           Get-ChildItem -Path "${env:ProgramFiles}" | % { $_.FullName } | Select-String -Pattern "[\/\\]ImageMagick[^\/\\]*$" | Out-File -Append -FilePath $env:GITHUB_PATH -Encoding utf8
+
+      # ----------------------------------------------------------------
+      # MrDesk custom (06/10/2026): o build de 32 bits recebe as MESMAS
+      # alteracoes do de 64 bits (decisao do Celso: todas as versoes com o
+      # mesmo comportamento). Os passos abaixo sao copia fiel dos de
+      # generator-windows.yml - ao mudar um patch la, copiar pra ca.
+      # As alteracoes em arquivos do Flutter sao aplicadas mas nao entram no
+      # programa (o de 32 bits usa a interface antiga, Sciter). A atualizacao
+      # automatica continua desligada aqui (o servidor so tem instalador de
+      # 64 bits): views.py forca allow-auto-update = N e removeNewVersionNotif.
+      # ----------------------------------------------------------------
+      - name: patch common.rs to report install status in sysinfo (MrDesk custom)
+        shell: bash
+        run: |
+          python3 - <<'PYEOF'
+          import pathlib
+          p = pathlib.Path("src/common.rs")
+          s = p.read_text()
+          old = (
+              '    #[cfg(not(any(target_os = "android", target_os = "ios")))]\n'
+              '    {\n'
+              '        let username = crate::platform::get_active_username();\n'
+              '        if !username.is_empty() && (!cfg!(windows) || username != "SYSTEM") {\n'
+              '            out["username"] = json!(username);\n'
+              '        }\n'
+              '    }\n'
+              '    out\n'
+              '}'
+          )
+          new = (
+              '    #[cfg(not(any(target_os = "android", target_os = "ios")))]\n'
+              '    {\n'
+              '        let username = crate::platform::get_active_username();\n'
+              '        if !username.is_empty() && (!cfg!(windows) || username != "SYSTEM") {\n'
+              '            out["username"] = json!(username);\n'
+              '        }\n'
+              '        out["installed"] = json!(if crate::platform::is_installed() { "S" } else { "N" });\n'
+              '    }\n'
+              '    out\n'
+              '}'
+          )
+          if old not in s:
+              raise SystemExit(
+                  "ERRO: bloco esperado nao encontrado em src/common.rs - "
+                  "o RustDesk oficial pode ter mudado essa funcao (get_sysinfo). "
+                  "Atualize o patch em generator-windows.yml."
+              )
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+          print("common.rs patched: campo 'installed' adicionado ao get_sysinfo()")
+          PYEOF
+
+      - name: patch windows.rs to set service description (MrDesk custom)
+        shell: bash
+        run: |
+          python3 - <<'PYEOF'
+          import pathlib
+          p = pathlib.Path("src/platform/windows.rs")
+          s = p.read_text()
+
+          # Localiza pela funcao (nao pelo bloco inteiro, que tem escaping
+          # aninhado demais pra manter em um literal old/new) e insere a
+          # linha "sc description" logo antes do "sc start" que pertence a
+          # essa funcao especificamente (ha outro "sc start {app_name}" em
+          # get_import_config, mais acima no arquivo).
+          fn_marker = "fn get_create_service(exe: &str) -> String {"
+          fn_idx = s.find(fn_marker)
+          if fn_idx == -1:
+              raise SystemExit(
+                  "ERRO: funcao get_create_service nao encontrada em src/platform/windows.rs - "
+                  "o RustDesk oficial pode ter mudado essa funcao. Atualize o patch em generator-windows.yml."
+              )
+
+          target = "sc start {app_name}"
+          target_idx = s.find(target, fn_idx)
+          if target_idx == -1:
+              raise SystemExit(
+                  "ERRO: linha 'sc start {app_name}' nao encontrada dentro de get_create_service - "
+                  "o RustDesk oficial pode ter mudado essa funcao. Atualize o patch em generator-windows.yml."
+              )
+
+          insertion = (
+              'sc description {app_name} \\"Suporte remoto Sysrs para atualizacao do Sistema '
+              'de Gestao Empresarial MR1/MRE\\"\n'
+          )
+          s = s[:target_idx] + insertion + s[target_idx:]
+          p.write_text(s)
+          print("windows.rs patched: 'sc description' adicionado ao get_create_service()")
+          PYEOF
+
+      - name: patch windows.rs - service recovery and keep delayed start (MrDesk custom, patch 20)
+        shell: bash
+        run: |
+          python3 - <<'PYEOF'
+          # Patch 20 (06/10/2026, pedido do Celso): servico do MrDesk no Windows.
+          #  a) Reinicio automatico se o servico cair: 5 tentativas com 1 minuto
+          #     de intervalo, depois para ("sc failure"). Aplicado ao criar o servico (instalar)
+          #     e tambem na atualizacao automatica (update_me), pra chegar nas
+          #     maquinas ja instaladas.
+          #  b) Maquina lenta em que o inicio do servico foi posto a mao em
+          #     "automatico (atrasado)" ("sc config MrDesk start= delayed-auto"):
+          #     reinstalar por cima apaga e recria o servico e perdia o ajuste.
+          #     Agora o instalador ve o ajuste antes de apagar e reaplica depois de
+          #     criar. A atualizacao automatica nao recria o servico (so para,
+          #     troca os arquivos e inicia), entao la o ajuste ja era mantido.
+          # O padrao continua "automatico" (sem atraso) pra todo mundo.
+          import pathlib
+          p = pathlib.Path("src/platform/windows.rs")
+          s = p.read_text()
+
+          def erro(o_que):
+              raise SystemExit(
+                  "ERRO: " + o_que + " nao encontrado em src/platform/windows.rs (patch 20) - "
+                  "o RustDesk oficial pode ter mudado. Atualize o patch em generator-windows.yml."
+              )
+
+          # 5 tentativas com 1 minuto de intervalo e para: a 6a acao e "nenhuma"
+          # (""), senao o Windows repetiria a ultima pra sempre. A contagem zera
+          # depois de 1 dia sem falha (reset= 86400).
+          falha = (
+              "sc failure {app_name} reset= 86400 actions= "
+              "restart/60000/restart/60000/restart/60000/restart/60000/restart/60000/"
+              r'\"\"/0'
+              "\n"
+          )
+
+          # 1) antes de apagar o servico (instalar por cima / desinstalar): guarda
+          #    se o inicio estava em "atrasado"
+          fn_idx = s.find("fn get_before_uninstall(kill_self: bool) -> String {")
+          if fn_idx == -1:
+              erro("funcao get_before_uninstall")
+          alvo = "    sc stop {app_name}\n    sc delete {app_name}\n"
+          i = s.find(alvo, fn_idx)
+          if i == -1 or i - fn_idx > 1200:
+              erro("'sc stop' + 'sc delete' em get_before_uninstall")
+          guarda = (
+              "    set MRDESK_ATRASADO=\n"
+              r'    reg query HKLM\\SYSTEM\\CurrentControlSet\\Services\\{app_name} /v DelayedAutostart 2>nul | findstr /C:\"0x1\" >nul && set MRDESK_ATRASADO=1'
+              "\n"
+          )
+          s = s[:i] + guarda + s[i:]
+
+          # 2) ao criar o servico: reinicio em caso de falha e, se estava em
+          #    "atrasado", volta a ficar
+          fn_idx = s.find("fn get_create_service(exe: &str) -> String {")
+          if fn_idx == -1:
+              erro("funcao get_create_service")
+          alvo = "sc start {app_name}"
+          i = s.find(alvo, fn_idx)
+          if i == -1 or i - fn_idx > 1500:
+              erro("'sc start' em get_create_service")
+          s = s[:i] + falha + "if defined MRDESK_ATRASADO sc config {app_name} start= delayed-auto\n" + s[i:]
+
+          # 3) atualizacao automatica: aplica o reinicio em caso de falha nas
+          #    maquinas ja instaladas (o servico nao e recriado aqui)
+          fn_idx = s.find("pub fn update_me(debug: bool) -> ResultType<()> {")
+          if fn_idx == -1:
+              erro("funcao update_me")
+          alvo = "{remove_meta_toml}\n{restore_service_cmd}\n"
+          i = s.find(alvo, fn_idx)
+          if i == -1:
+              erro("'{remove_meta_toml}' + '{restore_service_cmd}' em update_me")
+          i += len("{remove_meta_toml}\n")
+          s = s[:i] + falha + s[i:]
+
+          p.write_text(s)
+          print("windows.rs patched: reinicio do servico em caso de falha e inicio atrasado mantido (patch 20)")
+          PYEOF
+
+      - name: patch windows.rs - installer on Windows 7 with accented user name (MrDesk custom, patch 21)
+        shell: bash
+        run: |
+          python3 - <<'PYEOF'
+          # Patch 21 (06/10/2026; o mesmo do gerador de 32 bits). No Windows 7, o instalador falhava sem
+          # mensagem ("install failed") quando o usuario do Windows tem acento no
+          # nome (caso real: "MDE RECEP\u00c7\u00c3O"). O instalador grava um .bat em UTF-8
+          # (chcp 65001) com os caminhos da pasta do usuario; o cmd do Windows 7
+          # se perde com letra acentuada nesse modo e o .bat para no meio - nem a
+          # pasta em Arquivos de Programas e criada. Conserto: antes de gravar o
+          # .bat, trocar a pasta do usuario pelo nome curto dela (8.3, so ASCII,
+          # ex.: C:\Users\MDEREC~1), que e o que foi feito a mao naquela maquina.
+          # Se o nome ja e ASCII, ou o Windows nao tem nome curto, nada muda.
+          import pathlib
+          p = pathlib.Path("src/platform/windows.rs")
+          s = p.read_text(encoding="utf-8")
+
+          def erro(o_que):
+              raise SystemExit(
+                  "ERRO: " + o_que + " nao encontrado em src/platform/windows.rs (patch 21, instalador) - "
+                  "o RustDesk oficial pode ter mudado. Atualize o patch em generator-windows.yml."
+              )
+
+          fn_marker = "fn write_cmds(cmds: String, ext: &str, tip: &str) -> ResultType<std::path::PathBuf> {"
+          fn_idx = s.find(fn_marker)
+          if fn_idx == -1:
+              erro("funcao write_cmds")
+          alvo = "    // in case cmds mixed with \\r\\n and \\n, make sure all ending with \\r\\n\n"
+          i = s.find(alvo, fn_idx)
+          if i == -1 or i - fn_idx > 1500:
+              erro("comentario 'in case cmds mixed' em write_cmds")
+          s = s[:i] + (
+              "    if ext == \"bat\" {\n"
+              "        cmds = mrdesk_caminho_curto_do_perfil(cmds);\n"
+              "    }\n"
+          ) + s[i:]
+
+          funcao = r"""
+          // MrDesk custom: troca a pasta do usuario pelo nome curto (8.3) nos
+          // comandos do instalador, quando ela tem caractere fora do ASCII.
+          fn mrdesk_caminho_curto_do_perfil(cmds: String) -> String {
+              #[link(name = "kernel32")]
+              extern "system" {
+                  fn GetShortPathNameW(longo: *const u16, curto: *mut u16, tamanho: u32) -> u32;
+              }
+              let perfil = match std::env::var("USERPROFILE") {
+                  Ok(p) if !p.is_empty() && !p.is_ascii() => p,
+                  _ => return cmds,
+              };
+              let longo: Vec<u16> = perfil.encode_utf16().chain(std::iter::once(0)).collect();
+              let mut curto = vec![0u16; 1024];
+              let n = unsafe { GetShortPathNameW(longo.as_ptr(), curto.as_mut_ptr(), curto.len() as u32) }
+                  as usize;
+              if n == 0 || n >= curto.len() {
+                  return cmds;
+              }
+              let curto = String::from_utf16_lossy(&curto[..n]);
+              if !curto.is_ascii() || curto == perfil {
+                  return cmds;
+              }
+              cmds.replace(&perfil, &curto)
+          }
+
+          """
+          import textwrap
+          s = s[:fn_idx] + textwrap.dedent(funcao).lstrip("\n") + s[fn_idx:]
+          p.write_text(s, encoding="utf-8")
+          print("windows.rs patched: instalador usa o nome curto da pasta do usuario (Windows 7 com acento)")
+          PYEOF
+
+      - name: patch ui_cm_interface.rs to allow Elevate even when installed as service (MrDesk custom - TESTE)
+        shell: bash
+        run: |
+          python3 - <<'PYEOF'
+          import pathlib
+          p = pathlib.Path("src/ui_cm_interface.rs")
+          s = p.read_text()
+
+          # can_elevate() normalmente retorna "!is_installed()", ou seja, o botao
+          # "Elevate" da janela de Permissoes so funciona em modo portatil (nao
+          # instalado). No MrDesk (instalado como servico), isso bloqueia o
+          # unico caminho nativo do RustDesk pra alcancar janelas elevadas
+          # (como a propria tela de Configuracoes) durante uma sessao remota.
+          # Este patch faz can_elevate() sempre retornar true no Windows,
+          # independente de estar instalado - EM TESTE, a confirmar se resolve
+          # o problema de acesso as Configuracoes remotamente.
+          fn_marker = "pub fn can_elevate() -> bool {"
+          fn_idx = s.find(fn_marker)
+          if fn_idx == -1:
+              raise SystemExit(
+                  "ERRO: funcao can_elevate nao encontrada em src/ui_cm_interface.rs - "
+                  "o RustDesk oficial pode ter mudado essa funcao. Atualize o patch em generator-windows.yml."
+              )
+
+          target = "return !crate::platform::is_installed();"
+          target_idx = s.find(target, fn_idx)
+          if target_idx == -1:
+              raise SystemExit(
+                  "ERRO: linha 'return !crate::platform::is_installed();' nao encontrada dentro de can_elevate - "
+                  "o RustDesk oficial pode ter mudado essa funcao. Atualize o patch em generator-windows.yml."
+              )
+
+          insertion = "return true; // MrDesk custom: permite Elevate mesmo instalado como servico\n    "
+          s = s[:target_idx] + insertion + s[target_idx + len(target):]
+          p.write_text(s)
+          print("ui_cm_interface.rs patched: can_elevate() sempre retorna true no Windows")
+          PYEOF
+
+      - name: patch native software-update check to use MrDesk's own server (MrDesk custom)
+        shell: bash
+        run: |
+          # O RustDesk original manda um POST fixo pra https://api.rustdesk.com/version/latest
+          # pra saber se ha uma versao nova, e essa checagem inteira e desligada de proposito
+          # para builds "custom client" como o MrDesk (is_custom_client() == true). Aqui a
+          # gente: (1) troca a URL fixa pelo nosso proprio endpoint, e (2) reativa a checagem
+          # (manual e a automatica diaria em segundo plano) especificamente pro MrDesk. O
+          # endpoint (mrdesk-suporte /api/version/latest) e quem decide se ha versao nova.
+          set -e
+
+          python3 - <<'PYEOF'
+          import pathlib
+
+          # 1) URL fixa do check -> nosso servidor
+          p = pathlib.Path("libs/hbb_common/src/lib.rs")
+          s = p.read_text()
+          target = 'const URL: &str = "https://api.rustdesk.com/version/latest";'
+          if target not in s:
+              raise SystemExit(
+                  "ERRO: URL de version_check_request nao encontrada em libs/hbb_common/src/lib.rs - "
+                  "o RustDesk oficial pode ter mudado essa funcao. Atualize o patch em generator-windows.yml."
+              )
+          s = s.replace(target, 'const URL: &str = "https://mrdesk.sysrs.com.br/api/version/latest";', 1)
+          p.write_text(s)
+          print("hbb_common/src/lib.rs patched: URL do version check aponta pro nosso servidor")
+
+          # 2) Reativa a checagem manual (desligada de proposito pra custom client)
+          p = pathlib.Path("src/common.rs")
+          s = p.read_text()
+          target = "pub fn check_software_update() {\n    if is_custom_client() {\n        return;\n    }"
+          if target not in s:
+              raise SystemExit(
+                  "ERRO: guarda is_custom_client() em check_software_update() nao encontrada em src/common.rs - "
+                  "o RustDesk oficial pode ter mudado essa funcao. Atualize o patch em generator-windows.yml."
+              )
+          replacement = "pub fn check_software_update() {\n    // MrDesk custom: checagem reativada, aponta pro nosso proprio servidor."
+          s = s.replace(target, replacement, 1)
+          p.write_text(s)
+          print("common.rs patched: check_software_update() reativado para o MrDesk")
+
+          # 3) Reativa a checagem automatica diaria em segundo plano (Windows)
+          p = pathlib.Path("src/updater.rs")
+          s = p.read_text()
+          target = "let update_msi = crate::platform::is_msi_installed()? && !crate::is_custom_client();"
+          if target not in s:
+              raise SystemExit(
+                  "ERRO: linha 'update_msi' nao encontrada em src/updater.rs - "
+                  "o RustDesk oficial pode ter mudado essa funcao. Atualize o patch em generator-windows.yml."
+              )
+          replacement = "let update_msi = crate::platform::is_msi_installed()?; // MrDesk custom: checagem automatica diaria reativada"
+          s = s.replace(target, replacement, 1)
+          p.write_text(s)
+          print("updater.rs patched: checagem automatica diaria reativada para o MrDesk")
+
+          # 4) A tela principal do Flutter tem seu PROPRIO bloqueio pra esconder o card de
+          #    "nova versao disponivel" quando e um "custom client" (bind.isCustomClient())
+          #    OU quando o prefixo de URI do app (ex.: "mrdesk://") nao contem "rustdesk".
+          #    Sem tirar esse bloqueio, o card nunca aparece pro MrDesk mesmo com o
+          #    servidor respondendo certinho.
+          p = pathlib.Path("flutter/lib/desktop/pages/desktop_home_page.dart")
+          s = p.read_text()
+          target = (
+              "if (!bind.isCustomClient() &&\n"
+              "        updateUrl.isNotEmpty &&\n"
+              "        !isCardClosed &&\n"
+              "        bind.mainUriPrefixSync().contains('rustdesk')) {"
+          )
+          if target not in s:
+              raise SystemExit(
+                  "ERRO: condicao do card 'nova versao disponivel' nao encontrada em "
+                  "flutter/lib/desktop/pages/desktop_home_page.dart - o RustDesk oficial pode ter "
+                  "mudado essa tela. Atualize o patch em generator-windows.yml."
+              )
+          replacement = "if (updateUrl.isNotEmpty && !isCardClosed) { // MrDesk custom: card de update habilitado"
+          s = s.replace(target, replacement, 1)
+          p.write_text(s)
+          print("desktop_home_page.dart patched: card de nova versao habilitado para custom client")
+
+          # 5) Na inicializacao da interface, checkUpdate() (flutter/lib/common.dart) so
+          #    registra o evento que preenche stateGlobal.updateUrl, e so pede a checagem
+          #    ao Rust, quando NAO e custom client. Sem tirar essa trava, a tela nunca
+          #    pergunta nada ao servidor e o card do item 4 fica sempre vazio (a checagem
+          #    que aparece no log vem so do atualizador em segundo plano do servico).
+          p = pathlib.Path("flutter/lib/common.dart")
+          s = p.read_text()
+          target = (
+              "void checkUpdate() {\n"
+              "  if (!isWeb) {\n"
+              "    if (!bind.isCustomClient()) {"
+          )
+          if target not in s:
+              raise SystemExit(
+                  "ERRO: trava isCustomClient() em checkUpdate() nao encontrada em "
+                  "flutter/lib/common.dart - o RustDesk oficial pode ter mudado essa funcao. "
+                  "Atualize o patch em generator-windows.yml."
+              )
+          replacement = (
+              "void checkUpdate() {\n"
+              "  if (!isWeb) {\n"
+              "    if (true) { // MrDesk custom: checagem de update na interface habilitada"
+          )
+          s = s.replace(target, replacement, 1)
+          p.write_text(s)
+          print("common.dart patched: checkUpdate() da interface habilitado para custom client")
+
+          # 6) (Item 19) Foco do teclado ao voltar pra janela da sessao (Alt+Tab, barra de
+          #    tarefas...). No Windows, onWindowBlur() tira o foco do teclado da tela remota,
+          #    mas onWindowFocus() so devolve no "modo de mouse relativo" - no uso normal o
+          #    teclado so voltava depois de clicar dentro da tela remota. Aqui devolvemos o
+          #    foco ao voltar pra janela, so na aba visivel (varias sessoes em abas).
+          p = pathlib.Path("flutter/lib/desktop/pages/remote_page.dart")
+          s = p.read_text()
+          target = (
+              "    stateGlobal.isFocused.value = true;\n"
+              "\n"
+              "    // Restore relative mouse mode constraints when window regains focus.\n"
+          )
+          if s.count(target) != 1:
+              raise SystemExit(
+                  "ERRO: trecho de onWindowFocus() nao encontrado em "
+                  "flutter/lib/desktop/pages/remote_page.dart - o RustDesk oficial pode ter "
+                  "mudado essa funcao. Atualize o patch 6 em generator-windows.yml."
+              )
+          replacement = (
+              "    stateGlobal.isFocused.value = true;\n"
+              "\n"
+              "    // MrDesk custom: devolve o teclado para a tela remota ao voltar para a janela\n"
+              "    if (isWindows && !_rawKeyFocusNode.hasFocus) {\n"
+              "      final mrdeskTabs = widget.tabController?.state.value;\n"
+              "      final mrdeskAbaVisivel = mrdeskTabs == null ||\n"
+              "          mrdeskTabs.tabs.isEmpty ||\n"
+              "          mrdeskTabs.selected >= mrdeskTabs.tabs.length ||\n"
+              "          mrdeskTabs.selectedTabInfo.key == widget.id;\n"
+              "      if (mrdeskAbaVisivel) {\n"
+              "        _rawKeyFocusNode.requestFocus();\n"
+              "      }\n"
+              "    }\n"
+              "\n"
+              "    // Restore relative mouse mode constraints when window regains focus.\n"
+          )
+          s = s.replace(target, replacement, 1)
+          p.write_text(s)
+          print("remote_page.dart patched: foco do teclado volta pra tela remota ao ativar a janela")
+
+          # 7) (Item 16) Junto com o heartbeat (a cada ~15 s), manda ha quantos segundos o
+          #    teclado/mouse estao parados ("mrdesk_ocioso"), pro painel mostrar
+          #    "sem uso ha X min". GetLastInputInfo so vale na sessao do usuario - o
+          #    heartbeat sai do processo --server, que o servico abre na sessao do usuario.
+          #    Manda so o tempo parado, nada do que e digitado.
+          p = pathlib.Path("src/hbbs_http/sync.rs")
+          s = p.read_text()
+          target = '                v["modified_at"] = json!(modified_at);\n'
+          if s.count(target) != 1:
+              raise SystemExit(
+                  "ERRO: linha do heartbeat (modified_at) nao encontrada em "
+                  "src/hbbs_http/sync.rs - o RustDesk oficial pode ter mudado o heartbeat. "
+                  "Atualize o patch 7 em generator-windows.yml."
+              )
+          replacement = (
+              target
+              + "                // MrDesk custom (item 16): tempo sem uso de teclado/mouse\n"
+              + "                #[cfg(windows)]\n"
+              + "                {\n"
+              + "                    if let Some(ocioso) = mrdesk_segundos_ocioso() {\n"
+              + '                        v["mrdesk_ocioso"] = json!(ocioso);\n'
+              + "                    }\n"
+              + "                }\n"
+          )
+          s = s.replace(target, replacement, 1)
+          s += (
+              "\n"
+              "// MrDesk custom (item 16): segundos desde o ultimo uso de teclado/mouse na sessao\n"
+              "#[cfg(windows)]\n"
+              "fn mrdesk_segundos_ocioso() -> Option<u64> {\n"
+              "    #[link(name = \"kernel32\")]\n"
+              "    extern \"system\" {\n"
+              "        fn GetTickCount() -> u32;\n"
+              "    }\n"
+              "    use winapi::um::winuser::{GetLastInputInfo, LASTINPUTINFO};\n"
+              "    unsafe {\n"
+              "        let mut lii = LASTINPUTINFO {\n"
+              "            cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,\n"
+              "            dwTime: 0,\n"
+              "        };\n"
+              "        if GetLastInputInfo(&mut lii) == 0 {\n"
+              "            return None;\n"
+              "        }\n"
+              "        Some((GetTickCount().wrapping_sub(lii.dwTime) / 1000) as u64)\n"
+              "    }\n"
+              "}\n"
+          )
+          p.write_text(s)
+          print("sync.rs patched: heartbeat manda tempo sem uso de teclado/mouse (mrdesk_ocioso)")
+
+          # 8) (Item 6A + 23) Controle de tecnicos autorizados, no ponto em que o MrDesk recebe
+          #    o pedido de login (src/server/connection.rs, on_message/LoginRequest), ANTES
+          #    de validar a senha. Vale pra todos os tipos de acesso e nos dois builds.
+          #    Consulta POST /api/tecnicos/verificar {"id", "peer"} -> {"autorizado": bool},
+          #    espera maxima 5 s; servidor sem resposta -> lista guardada (patch 10).
+          #    Bloqueio/falha: mensagem pra quem conecta + auditoria com "permissao" B/F.
+          p = pathlib.Path("src/server/connection.rs")
+          s = p.read_text()
+          target = (
+              "        if let Some(message::Union::LoginRequest(lr)) = msg.union {\n"
+              "            self.handle_login_request_without_validation(&lr).await;\n"
+              "            if self.authorized {\n"
+              "                return true;\n"
+              "            }\n"
+          )
+          if s.count(target) != 1:
+              raise SystemExit(
+                  "ERRO: inicio do tratamento de LoginRequest nao encontrado em "
+                  "src/server/connection.rs - o RustDesk oficial pode ter mudado o login. "
+                  "Atualize o patch 8 em generator-windows.yml."
+              )
+          s = s.replace(target, target + '            // MrDesk custom (item 6A): so MrDeskPro de tecnico autorizado conecta\n            match mrdesk_verificar_tecnico(&self.lr.my_id).await {\n                MrdeskPermissao::Permitida => {}\n                MrdeskPermissao::Bloqueada => {\n                    log::warn!("MrDesk: conexao bloqueada, tecnico nao autorizado: {}", self.lr.my_id);\n                    self.post_conn_audit(json!({"peer": ((&self.lr.my_id, &self.lr.my_name)), "permissao": "B"}));\n                    self.send_login_error(MRDESK_MSG_BLOQUEADA).await;\n                    sleep(1.).await;\n                    return false;\n                }\n                MrdeskPermissao::Falha => {\n                    log::warn!("MrDesk: nao foi possivel verificar o tecnico {} (servidor fora, fora da lista guardada)", self.lr.my_id);\n                    self.post_conn_audit(json!({"peer": ((&self.lr.my_id, &self.lr.my_name)), "permissao": "F"}));\n                    self.send_login_error(MRDESK_MSG_FALHA).await;\n                    sleep(1.).await;\n                    return false;\n                }\n            }\n', 1)
+          s += '\n// ================================================================\n// MrDesk custom (item 6A + 23): controle de tecnicos autorizados.\n// Antes de validar a senha, pergunta ao servidor da Sysrs se o ID de quem\n// esta conectando (MrDeskPro) esta autorizado. Se o servidor nao responder,\n// usa a lista de tecnicos guardada neste computador (item 23, atualizada 1x por\n// dia e a cada acesso; vale 15 dias) - ver hbbs_http/sync.rs.\n// ================================================================\nenum MrdeskPermissao {\n    Permitida,\n    Bloqueada,\n    Falha,\n}\n\nconst MRDESK_MSG_BLOQUEADA: &str = "Conex\\u{e3}o n\\u{e3}o permitida por regras de seguran\\u{e7}a da Sysrs.";\nconst MRDESK_MSG_FALHA: &str = "N\\u{e3}o foi poss\\u{ed}vel verificar a autoriza\\u{e7}\\u{e3}o: servidor da Sysrs fora do ar. Tente novamente em instantes.";\n\nasync fn mrdesk_verificar_tecnico(peer_id: &str) -> MrdeskPermissao {\n    let base = crate::get_api_server(\n        Config::get_option("api-server"),\n        Config::get_option("custom-rendezvous-server"),\n    );\n    let mut resposta: Option<bool> = None;\n    if !base.is_empty() {\n        let url = format!("{}/api/tecnicos/verificar", base);\n        let body = json!({ "id": Config::get_id(), "peer": peer_id }).to_string();\n        if let Ok(Ok(texto)) = hbb_common::tokio::time::timeout(\n            std::time::Duration::from_secs(5),\n            crate::post_request(url, body, ""),\n        )\n        .await\n        {\n            resposta = serde_json::from_str::<Value>(&texto)\n                .ok()\n                .and_then(|v| v.get("autorizado").and_then(|a| a.as_bool()));\n        }\n    }\n    match resposta {\n        Some(autorizado) => {\n            // servidor no ar: aproveita e renova a lista guardada (em segundo plano)\n            hbb_common::tokio::spawn(crate::hbbs_http::sync::mrdesk_atualizar_lista(true));\n            if autorizado {\n                MrdeskPermissao::Permitida\n            } else {\n                MrdeskPermissao::Bloqueada\n            }\n        }\n        None => {\n            if crate::hbbs_http::sync::mrdesk_tecnico_na_lista(peer_id) {\n                log::info!("MrDesk: servidor sem resposta, tecnico {} autorizado pela lista guardada", peer_id);\n                MrdeskPermissao::Permitida\n            } else {\n                MrdeskPermissao::Falha\n            }\n        }\n    }\n}\n'
+          p.write_text(s)
+          print("connection.rs patched: controle de tecnicos autorizados (6A)")
+
+          # 10) (Item 23) Lista de tecnicos guardada no MrDesk (src/hbbs_http/sync.rs):
+          #     funcoes da lista + atualizacao 1x por dia no laco do heartbeat.
+          p = pathlib.Path("src/hbbs_http/sync.rs")
+          s = p.read_text()
+          target = '                if let Ok(s) = crate::post_request(url.clone(), v.to_string(), "").await {\n'
+          if s.count(target) != 1:
+              raise SystemExit(
+                  "ERRO: envio do heartbeat nao encontrado em src/hbbs_http/sync.rs - "
+                  "atualize o patch 10 em generator-windows.yml."
+              )
+          s = s.replace(target, "                mrdesk_atualizar_lista(false).await; // MrDesk custom (item 23)\n" + target, 1)
+          s += '\n// ================================================================\n// MrDesk custom (item 23): lista de tecnicos autorizados guardada neste\n// computador, usada quando o servidor nao responde. Servidor devolve codigos\n// SHA-256 de "<ID deste MrDesk>:<ID do MrDeskPro>" (nao revelam os IDs).\n// Atualiza 1x por dia (heartbeat) e a cada acesso; vale 15 dias.\n// ================================================================\nconst MRDESK_LISTA_CHAVE: &str = "mrdesk-tec-lista";\nconst MRDESK_LISTA_VALIDADE: u64 = 15 * 24 * 3600;\nconst MRDESK_LISTA_INTERVALO: u64 = 24 * 3600;\n\nfn mrdesk_agora() -> u64 {\n    std::time::SystemTime::now()\n        .duration_since(std::time::UNIX_EPOCH)\n        .map(|d| d.as_secs())\n        .unwrap_or(0)\n}\n\nfn mrdesk_lista_salva() -> (u64, Vec<String>) {\n    let v: Value = serde_json::from_str(&LocalConfig::get_option(MRDESK_LISTA_CHAVE)).unwrap_or(Value::Null);\n    let ts = v.get("ts").and_then(|x| x.as_u64()).unwrap_or(0);\n    let lista = v\n        .get("lista")\n        .and_then(|x| x.as_array())\n        .map(|a| a.iter().filter_map(|i| i.as_str().map(|s| s.to_owned())).collect())\n        .unwrap_or_default();\n    (ts, lista)\n}\n\npub async fn mrdesk_atualizar_lista(forcar: bool) {\n    let (ts, _) = mrdesk_lista_salva();\n    if !forcar && mrdesk_agora().saturating_sub(ts) < MRDESK_LISTA_INTERVALO {\n        return;\n    }\n    let base = crate::get_api_server(\n        Config::get_option("api-server"),\n        Config::get_option("custom-rendezvous-server"),\n    );\n    if base.is_empty() {\n        return;\n    }\n    let url = format!("{}/api/tecnicos/lista", base);\n    let body = json!({ "id": Config::get_id() }).to_string();\n    if let Ok(Ok(texto)) = tokio::time::timeout(Duration::from_secs(5), crate::post_request(url, body, "")).await {\n        if let Ok(v) = serde_json::from_str::<Value>(&texto) {\n            if let Some(lista) = v.get("lista").and_then(|x| x.as_array()) {\n                let salvar = json!({ "ts": mrdesk_agora(), "lista": lista });\n                LocalConfig::set_option(MRDESK_LISTA_CHAVE.to_owned(), salvar.to_string());\n            }\n        }\n    }\n}\n\npub fn mrdesk_tecnico_na_lista(peer_id: &str) -> bool {\n    use sha2::{Digest, Sha256};\n    let (ts, lista) = mrdesk_lista_salva();\n    if ts == 0 || mrdesk_agora().saturating_sub(ts) >= MRDESK_LISTA_VALIDADE {\n        return false;\n    }\n    let mut h = Sha256::new();\n    h.update(format!("{}:{}", Config::get_id(), peer_id).as_bytes());\n    let codigo: String = h.finalize().iter().map(|b| format!("{:02x}", b)).collect();\n    lista.iter().any(|x| x == &codigo)\n}\n'
+          p.write_text(s)
+          print("sync.rs patched: lista de tecnicos guardada (item 23)")
+
+          # 11) (Item 24) Card de dispositivo (Recentes, Favoritos e catalogo do
+          #     MrDeskPro): 2a linha com usuario/cliente a esquerda e
+          #     computador/apelido a direita (flutter/lib/common/widgets/peer_card.dart).
+          p = pathlib.Path("flutter/lib/common/widgets/peer_card.dart")
+          s = p.read_text()
+          for nome_trecho, alvo, novo in (("lista", '                              child: Align(\n                                alignment: Alignment.centerLeft,\n                                child: Text(\n                                  name,\n                                  style: isPortrait ? null : greyStyle,\n                                  textAlign: TextAlign.start,\n                                  overflow: TextOverflow.ellipsis,\n                                ),\n                              ),\n', '                              child: mrdeskLinhaNome(peer, name,\n                                  isPortrait ? null : greyStyle, TextAlign.start),\n'),
+                                          ("card", '                                      child: Text(\n                                        name,\n                                        style: const TextStyle(\n                                            color: Colors.white70,\n                                            fontSize: 12),\n                                        textAlign: TextAlign.center,\n                                        overflow: TextOverflow.ellipsis,\n                                      ),\n', '                                      child: mrdeskLinhaNome(peer, name,\n                                          const TextStyle(color: Colors.white70, fontSize: 12),\n                                          TextAlign.center),\n')):
+              if s.count(alvo) != 1:
+                  raise SystemExit("ERRO: trecho do nome (" + nome_trecho + ") nao encontrado em "
+                                   "flutter/lib/common/widgets/peer_card.dart - atualize o patch 11.")
+              s = s.replace(alvo, novo, 1)
+          s += '\n// MrDesk custom (item 24): 2a linha do card com o usuario (no catalogo do\n// MrDeskPro: o cliente) a esquerda e o computador (no catalogo: o apelido) a\n// direita, em vez de "usuario@computador".\nWidget mrdeskLinhaNome(\n    Peer peer, String name, TextStyle? style, TextAlign alinhamentoSimples) {\n  var esquerda = peer.username;\n  var direita = peer.hostname;\n  var doCatalogo = false;\n  // Item 38: em Recentes/Favoritos o card traz o usuario/computador do Windows;\n  // se o ID esta no catalogo de enderecos (tecnico logado), usa o cliente e o\n  // apelido de la.\n  try {\n    final ab = gFFI.abModel.find(peer.id);\n    if (ab != null && ab.username.isNotEmpty) {\n      esquerda = ab.username;\n      direita = ab.hostname;\n      doCatalogo = true;\n    }\n  } catch (e) {\n    debugPrint(\'MrDesk: catalogo indisponivel para o card: $e\');\n  }\n  if (!doCatalogo &&\n      (esquerda.isEmpty || direita.isEmpty || name == peer.hostname)) {\n    return Align(\n      alignment: alinhamentoSimples == TextAlign.center\n          ? Alignment.center\n          : Alignment.centerLeft,\n      child: Text(name,\n          style: style,\n          textAlign: alinhamentoSimples,\n          overflow: TextOverflow.ellipsis),\n    );\n  }\n  return Row(children: [\n    Expanded(\n        child: Text(esquerda,\n            style: style,\n            textAlign: TextAlign.start,\n            overflow: TextOverflow.ellipsis)),\n    const SizedBox(width: 8),\n    Flexible(\n        child: Text(direita,\n            style: style,\n            textAlign: TextAlign.end,\n            overflow: TextOverflow.ellipsis)),\n  ]);\n}\n'
+          p.write_text(s)
+          print("peer_card.dart patched: cliente a esquerda e apelido a direita (item 24)")
+
+          # 12) (Item 27) Nome da aba da sessao = nome do cliente. O painel manda
+          #     ?cliente=... no link mrdeskpro://; guardamos como opcao do ID
+          #     ('mrdesk-cliente') e getDesktopTabLabel usa. Dica da aba mostra o ID.
+          for arquivo, alvo, novo in (
+                  ("flutter/lib/common.dart", '  List<String> args = List.empty(growable: true);\n  if (command != null && id != null) {\n', '  // MrDesk custom (item 27): o painel manda o nome do cliente no link\n  // (mrdeskpro://connect/<ID>?cliente=...); fica guardado no ID e vira o nome da aba.\n  final mrdeskCliente = queryParameters["cliente"];\n  if (id != null && mrdeskCliente != null && mrdeskCliente.isNotEmpty) {\n    bind.mainSetPeerOption(id: id, key: \'mrdesk-cliente\', value: mrdeskCliente);\n  }\n  List<String> args = List.empty(growable: true);\n  if (command != null && id != null) {\n'),
+                  ("flutter/lib/common.dart", 'String getDesktopTabLabel(String peerId, String alias) {\n  String label = alias.isEmpty ? peerId : alias;\n', "String getDesktopTabLabel(String peerId, String alias) {\n  // MrDesk custom (item 27): aba com o nome do cliente (vindo do painel)\n  try {\n    final mrdeskCfg = jsonDecode(bind.mainGetPeerSync(id: peerId));\n    final mrdeskCliente = mrdeskCfg['options']?['mrdesk-cliente'];\n    if (mrdeskCliente is String && mrdeskCliente.isNotEmpty) {\n      return mrdeskCliente;\n    }\n  } catch (e) {\n    debugPrint('MrDesk: sem nome de cliente para a aba: $e');\n  }\n  String label = alias.isEmpty ? peerId : alias;\n"),
+                  ("flutter/lib/desktop/widgets/tabbar_widget.dart", "            message:\n                widget.tabType == DesktopTabType.main ? '' : widget.label.value,\n", "            message: widget.tabType == DesktopTabType.main\n                ? ''\n                // MrDesk custom (item 27): dica da aba mostra tambem o ID\n                : (widget.label.value == widget.tabInfoKey\n                    ? widget.label.value\n                    : '${widget.label.value} - ID ${widget.tabInfoKey}'),\n")):
+              p = pathlib.Path(arquivo)
+              s = p.read_text()
+              if s.count(alvo) != 1:
+                  raise SystemExit("ERRO: trecho do nome da aba nao encontrado em " + arquivo + " - atualize o patch 12.")
+              s = s.replace(alvo, novo, 1)
+              p.write_text(s)
+          print("common.dart/tabbar_widget.dart patched: aba com o nome do cliente (item 27)")
+
+          # 13) (Item 13) Numero unico por acesso ("mrdesk_acesso", BIGINT) em todos os avisos de
+          #     auditoria (src/server/connection.rs, post_conn_audit).
+          p = pathlib.Path("src/server/connection.rs")
+          s = p.read_text()
+          if s.count('        v["conn_id"] = json!(self.inner.id);\n') != 1:
+              raise SystemExit("ERRO: conn_id da auditoria nao encontrado em src/server/connection.rs - atualize o patch 13.")
+          s = s.replace('        v["conn_id"] = json!(self.inner.id);\n', '        v["conn_id"] = json!(self.inner.id);\n        v["mrdesk_acesso"] = json!(mrdesk_inicio_servico() * 1_000_000 + (self.inner.id as i64).rem_euclid(1_000_000)); // MrDesk custom (item 13)\n', 1)
+          s += '\n// MrDesk custom (item 13): numero unico por acesso nos avisos de auditoria\n// (coluna auditoria.acesso, BIGINT). O conn_id recomeca do 1 quando o servico\n// reinicia; juntando o segundo em que o processo iniciou (10 digitos) com o\n// conn_id (6 digitos), cada acesso tem um numero que nao se repete.\nfn mrdesk_inicio_servico() -> i64 {\n    static INICIO: std::sync::OnceLock<i64> = std::sync::OnceLock::new();\n    *INICIO.get_or_init(|| {\n        std::time::SystemTime::now()\n            .duration_since(std::time::UNIX_EPOCH)\n            .map(|d| d.as_secs() as i64)\n            .unwrap_or(0)\n    })\n}\n'
+          p.write_text(s)
+          print("connection.rs patched: numero unico por acesso na auditoria (item 13)")
+
+          # 14) (Item 20) Senha lembrada: registrar no log normal quando ela e gravada ou
+          #     apagada (src/client.rs; antes so em nivel debug, que nao vai pro arquivo).
+          p = pathlib.Path("src/client.rs")
+          s = p.read_text()
+          for alvo, novo in (('log::debug!("remove password of {}", self.id);', 'log::info!("MrDesk: senha lembrada removida do ID {} (login sem lembrar senha)", self.id);'), ('log::debug!("remember password of {}", self.id);', 'log::info!("MrDesk: senha lembrada gravada para o ID {}", self.id);')):
+              if s.count(alvo) != 1:
+                  raise SystemExit("ERRO: log da senha lembrada nao encontrado em src/client.rs - atualize o patch 14.")
+              s = s.replace(alvo, novo, 1)
+          p.write_text(s)
+          print("client.rs patched: log da senha lembrada (item 20)")
+
+          # 15) (Item 28) Transferencia de arquivos (MrDeskPro, lados local e remoto):
+          #     Enter entra na pasta/unidade selecionada (igual ao duplo clique) e zera a
+          #     busca por nome; Backspace volta pra pasta de cima (como no Explorer).
+          #     Busca por nome: usa sempre a lista da pasta atual (antes ficava com a
+          #     lista antiga depois de trocar de pasta, ate clicar em alguma linha);
+          #     se o texto digitado nao acha nada, recomeca da ultima letra; Esc zera.
+          #     Depois de trocar de pasta o foco do teclado volta pra lista.
+          #     Setas pra cima/baixo andam na lista (sem selecao: vai pro primeiro item).
+          #     A ultima pasta e gravada a cada troca de pasta (antes so ao fechar: com
+          #     a janela fechando, a do lado remoto nao chegava a ser gravada).
+          #     Lado remoto volta pra ultima pasta usada (a pasta inicial que o remoto
+          #     manda ao conectar nao tem mais preferencia sobre a guardada; se a guardada
+          #     nao existir, abre a do usuario).
+          p = pathlib.Path("flutter/lib/desktop/widgets/list_search_action_listener.dart")
+          s = p.read_text()
+          for alvo, novo in (
+              ("import 'package:flutter/material.dart';\n",
+               "import 'package:flutter/material.dart';\nimport 'package:flutter/services.dart';\n"),
+              ("  final Function(String) onSearch;\n",
+               "  final Function(String) onSearch;\n  final Function()? onEnter; // MrDesk custom (item 28)\n  final Function()? onBackspace; // MrDesk custom (item 28)\n  final Function()? onEscape; // MrDesk custom (item 28)\n  final Function(int)? onArrow; // MrDesk custom (item 28)\n"),
+              ("      required this.onSearch});\n",
+               "      required this.onSearch,\n      this.onEnter,\n      this.onBackspace,\n      this.onEscape,\n      this.onArrow});\n"),
+              ("    return KeyboardListener(\n"
+               "        autofocus: true,\n"
+               "        onKeyEvent: (kv) {\n"
+               "          final ch = kv.character;\n"
+               "          if (ch == null) {\n"
+               "            return;\n"
+               "          }\n"
+               "          final action = buffer.input(ch);\n"
+               "          switch (action) {\n"
+               "            case ListSearchAction.search:\n"
+               "              onSearch(buffer.buffer);\n"
+               "              break;\n"
+               "            case ListSearchAction.next:\n"
+               "              onNext(buffer.buffer);\n"
+               "              break;\n"
+               "          }\n"
+               "        },\n"
+               "        focusNode: node,\n"
+               "        child: child);\n",
+               "    // MrDesk custom (item 28): Focus no lugar de KeyboardListener pra poder\n"
+               "    // consumir Enter, Backspace, Esc e as setas (senao as setas tiram o foco\n"
+               "    // da lista).\n"
+               "    return Focus(\n"
+               "        autofocus: true,\n"
+               "        focusNode: node,\n"
+               "        onKeyEvent: (_, kv) {\n"
+               "          final tecla = kv.logicalKey;\n"
+               "          if (tecla == LogicalKeyboardKey.enter ||\n"
+               "              tecla == LogicalKeyboardKey.numpadEnter) {\n"
+               "            if (onEnter == null) return KeyEventResult.ignored;\n"
+               "            if (kv is KeyDownEvent) {\n"
+               "              buffer.clear();\n"
+               "              onEnter!();\n"
+               "            }\n"
+               "            return KeyEventResult.handled;\n"
+               "          }\n"
+               "          if (tecla == LogicalKeyboardKey.backspace) {\n"
+               "            if (onBackspace == null) return KeyEventResult.ignored;\n"
+               "            if (kv is! KeyUpEvent) {\n"
+               "              buffer.clear();\n"
+               "              onBackspace!();\n"
+               "            }\n"
+               "            return KeyEventResult.handled;\n"
+               "          }\n"
+               "          if (tecla == LogicalKeyboardKey.escape) {\n"
+               "            if (kv is KeyDownEvent) {\n"
+               "              buffer.clear();\n"
+               "              if (onEscape != null) onEscape!();\n"
+               "            }\n"
+               "            return KeyEventResult.ignored;\n"
+               "          }\n"
+               "          if (tecla == LogicalKeyboardKey.arrowDown ||\n"
+               "              tecla == LogicalKeyboardKey.arrowUp) {\n"
+               "            if (onArrow == null) return KeyEventResult.ignored;\n"
+               "            if (kv is! KeyUpEvent) {\n"
+               "              buffer.clear();\n"
+               "              onArrow!(tecla == LogicalKeyboardKey.arrowDown ? 1 : -1);\n"
+               "            }\n"
+               "            return KeyEventResult.handled;\n"
+               "          }\n"
+               "          final ch = kv.character;\n"
+               "          if (ch == null) {\n"
+               "            return KeyEventResult.ignored;\n"
+               "          }\n"
+               "          final action = buffer.input(ch);\n"
+               "          switch (action) {\n"
+               "            case ListSearchAction.search:\n"
+               "              onSearch(buffer.buffer);\n"
+               "              break;\n"
+               "            case ListSearchAction.next:\n"
+               "              onNext(buffer.buffer);\n"
+               "              break;\n"
+               "          }\n"
+               "          return KeyEventResult.ignored;\n"
+               "        },\n"
+               "        child: child);\n"),
+              ("  String get buffer => _buffer;\n",
+               "  String get buffer => _buffer;\n\n"
+               "  // MrDesk custom (item 28): recomeca a busca por nome (ex.: depois de entrar na pasta).\n"
+               "  void clear() {\n"
+               "    _buffer = \"\";\n"
+               "    _duration = DateTime.fromMillisecondsSinceEpoch(0);\n"
+               "  }\n\n"
+               "  // MrDesk custom (item 28): recomeca a busca a partir deste texto.\n"
+               "  void reset(String s) {\n"
+               "    _buffer = s.toLowerCase();\n"
+               "    _duration = DateTime.now();\n"
+               "  }\n"),
+          ):
+              if s.count(alvo) != 1:
+                  raise SystemExit("ERRO: trecho nao encontrado em list_search_action_listener.dart - atualize o patch 15.")
+              s = s.replace(alvo, novo, 1)
+          p.write_text(s)
+
+          p = pathlib.Path("flutter/lib/desktop/pages/file_manager_page.dart")
+          s = p.read_text()
+          for alvo, novo in (
+              ("      node: _keyboardNode,\n      buffer: _listSearchBuffer,\n",
+               "      node: _keyboardNode,\n      buffer: _listSearchBuffer,\n"
+               "      // MrDesk custom (item 28): Enter entra na pasta/unidade selecionada.\n"
+               "      // Unidade (C:, D:) nao fica em selectedItems: usa a achada pela busca.\n"
+               "      onEnter: () {\n"
+               "        Entry? entry;\n"
+               "        if (selectedItems.items.length == 1) {\n"
+               "          entry = selectedItems.items.first;\n"
+               "        } else if (selectedItems.items.isEmpty &&\n"
+               "            _mrdeskAchadoBusca != null &&\n"
+               "            _mrdeskAchadoBusca!.isDrive &&\n"
+               "            controller.directory.value.entries.contains(_mrdeskAchadoBusca)) {\n"
+               "          entry = _mrdeskAchadoBusca;\n"
+               "        }\n"
+               "        if (entry == null || entry.isFile) return;\n"
+               "        _mrdeskAchadoBusca = null;\n"
+               "        selectedItems.clear();\n"
+               "        controller.openDirectory(entry.path).then((_) => _mrdeskFocarLista());\n"
+               "      },\n"
+               "      // MrDesk custom (item 28): Backspace volta pra pasta de cima.\n"
+               "      onBackspace: () {\n"
+               "        _mrdeskAchadoBusca = null;\n"
+               "        selectedItems.clear();\n"
+               "        controller.openDirectory('..').then((_) => _mrdeskFocarLista());\n"
+               "      },\n"
+               "      // MrDesk custom (item 28): Esc zera a busca e a selecao.\n"
+               "      onEscape: () {\n"
+               "        _mrdeskAchadoBusca = null;\n"
+               "        selectedItems.clear();\n"
+               "      },\n"
+               "      // MrDesk custom (item 28): setas andam na lista; sem selecao, vai pro primeiro.\n"
+               "      onArrow: (int delta) {\n"
+               "        final todos = controller.directory.value.entries;\n"
+               "        final lista = _searchText.isNotEmpty\n"
+               "            ? todos.where((e) => e.name.contains(_searchText.value)).toList()\n"
+               "            : todos;\n"
+               "        if (lista.isEmpty) return;\n"
+               "        final Entry? atual = selectedItems.items.isNotEmpty\n"
+               "            ? selectedItems.items.last\n"
+               "            : _mrdeskAchadoBusca;\n"
+               "        var index = atual == null ? -1 : lista.indexOf(atual);\n"
+               "        index = index < 0\n"
+               "            ? 0\n"
+               "            : (index + delta).clamp(0, lista.length - 1).toInt();\n"
+               "        final entry = lista[index];\n"
+               "        selectedItems.clear();\n"
+               "        selectedItems.add(entry);\n"
+               "        _mrdeskAchadoBusca = entry;\n"
+               "        if (scrollController.hasClients) {\n"
+               "          final pos = scrollController.position;\n"
+               "          final topo = index * kDesktopFileTransferRowHeight;\n"
+               "          if (topo < pos.pixels) {\n"
+               "            scrollController.jumpTo(topo);\n"
+               "          } else if (topo + kDesktopFileTransferRowHeight >\n"
+               "              pos.pixels + pos.viewportDimension) {\n"
+               "            scrollController.jumpTo(min(\n"
+               "                pos.maxScrollExtent,\n"
+               "                topo + kDesktopFileTransferRowHeight - pos.viewportDimension));\n"
+               "          }\n"
+               "        }\n"
+               "      },\n"),
+              ("      onNext: (buffer) {\n",
+               "      onNext: (buffer) {\n"
+               "        // MrDesk custom (item 28): sempre a lista da pasta atual.\n"
+               "        final entries = controller.directory.value.entries;\n"),
+              ("      onSearch: (buffer) {\n"
+               "        debugPrint(\"searching for $buffer\");\n"
+               "        final selectedEntries = selectedItems;\n"
+               "        final searchResult = entries\n"
+               "            .where((element) => element.name.toLowerCase().startsWith(buffer));\n",
+               "      onSearch: (buffer) {\n"
+               "        debugPrint(\"searching for $buffer\");\n"
+               "        // MrDesk custom (item 28): sempre a lista da pasta atual.\n"
+               "        final entries = controller.directory.value.entries;\n"
+               "        final selectedEntries = selectedItems;\n"
+               "        var searchResult = entries\n"
+               "            .where((element) => element.name.toLowerCase().startsWith(buffer));\n"
+               "        // MrDesk custom (item 28): nada achado -> recomeca da ultima letra.\n"
+               "        if (searchResult.isEmpty && buffer.length > 1) {\n"
+               "          final ultima = buffer.substring(buffer.length - 1);\n"
+               "          _listSearchBuffer.reset(ultima);\n"
+               "          searchResult = entries.where(\n"
+               "              (element) => element.name.toLowerCase().startsWith(ultima));\n"
+               "        }\n"),
+              ("    controller.directory.listen((e) => breadCrumbScrollToEnd());\n",
+               "    controller.directory.listen((e) {\n"
+               "      breadCrumbScrollToEnd();\n"
+               "      // MrDesk custom (item 28): trocou de pasta com o mouse nesta lista ->\n"
+               "      // foco do teclado volta pra lista (busca por nome, Enter, Backspace).\n"
+               "      final escopo = isLocal ? MouseFocusScope.local : MouseFocusScope.remote;\n"
+               "      if (widget._mouseFocusScope.value == escopo) _mrdeskFocarLista();\n"
+               "    });\n"),
+              ("  SelectedItems get selectedItems => controller.selectedItems;\n",
+               "  SelectedItems get selectedItems => controller.selectedItems;\n\n"
+               "  // MrDesk custom (item 28): devolve o foco do teclado pra lista de arquivos\n"
+               "  // (menos se o usuario esta digitando no campo do caminho/pesquisa).\n"
+               "  void _mrdeskFocarLista() {\n"
+               "    WidgetsBinding.instance.addPostFrameCallback((_) {\n"
+               "      if (mounted && !_locationNode.hasFocus) _keyboardNode.requestFocus();\n"
+               "    });\n"
+               "  }\n"),
+              ("  final _listSearchBuffer = TimeoutStringBuffer();\n",
+               "  final _listSearchBuffer = TimeoutStringBuffer();\n"
+               "  Entry? _mrdeskAchadoBusca; // MrDesk custom (item 28): ultimo item achado pela busca\n"),
+              ("    selectedEntries.add(searchResult.first);\n",
+               "    selectedEntries.add(searchResult.first);\n"
+               "    _mrdeskAchadoBusca = searchResult.first; // MrDesk custom (item 28)\n"),
+          ):
+              if s.count(alvo) != 1:
+                  raise SystemExit("ERRO: trecho nao encontrado em file_manager_page.dart - atualize o patch 15.")
+              s = s.replace(alvo, novo, 1)
+          p.write_text(s)
+
+          p = pathlib.Path("flutter/lib/models/file_model.dart")
+          s = p.read_text()
+          for alvo, novo in (
+              ("        if (directory.value.path.isNotEmpty) directory.value.path,\n",
+               "        // MrDesk custom (item 28): a pasta inicial que o remoto manda ao conectar\n"
+               "        // (igual a home) nao passa na frente da ultima pasta guardada.\n"
+               "        if (directory.value.path.isNotEmpty &&\n"
+               "            directory.value.path != options.value.home)\n"
+               "          directory.value.path,\n"),
+              ("      directory.value = fd;\n      return true;\n",
+               "      directory.value = fd;\n"
+               "      // MrDesk custom (item 28): grava a ultima pasta a cada troca (so ao fechar\n"
+               "      // nao bastava: com a janela fechando, a do lado remoto se perdia).\n"
+               "      if (_mrdeskPronto && fd.path.isNotEmpty) {\n"
+               "        unawaited(bind.sessionPeerOption(\n"
+               "            sessionId: sessionId,\n"
+               "            name: isLocal ? \"local_dir\" : \"remote_dir\",\n"
+               "            value: fd.path));\n"
+               "      }\n"
+               "      return true;\n"),
+              ("  Future<void> onReady() async {\n    if (isLocal) {\n",
+               "  // MrDesk custom (item 28): so grava a ultima pasta depois da abertura\n"
+               "  // inicial (senao a tentativa de abrir a home apagaria a pasta guardada).\n"
+               "  bool _mrdeskPronto = false;\n\n"
+               "  Future<void> onReady() async {\n    _mrdeskPronto = false;\n    if (isLocal) {\n"),
+              ("      await tryOpenReadyDirs();\n    }\n  }\n",
+               "      await tryOpenReadyDirs();\n    }\n    _mrdeskPronto = true; // MrDesk custom (item 28)\n  }\n"),
+              ("        debugPrint(\"init remote home: ${fd.path}\");\n        directory.value = fd;\n",
+               "        debugPrint(\"init remote home: ${fd.path}\");\n"
+               "        // MrDesk custom (item 28): nao troca a pasta se a guardada ja foi aberta.\n"
+               "        if (directory.value.path.isEmpty) directory.value = fd;\n"),
+          ):
+              if s.count(alvo) != 1:
+                  raise SystemExit("ERRO: trecho da ultima pasta nao encontrado em file_model.dart - atualize o patch 15.")
+              s = s.replace(alvo, novo, 1)
+          p.write_text(s)
+          print("file manager patched: Enter/Backspace e ultima pasta remota (item 28)")
+
+          # 16) (Item 29) Nome da aba = cliente tambem no acesso direto (ID digitado,
+          #     card, Recentes, Favoritos): ao conectar, se o ID esta no catalogo de
+          #     enderecos (login MrDeskPro), guarda o cliente (campo username do
+          #     catalogo) na opcao 'mrdesk-cliente' do ID - a mesma do link do painel
+          #     (patch 12). Usa flutter/lib/common.dart, funcao connect().
+          p = pathlib.Path("flutter/lib/common.dart")
+          s = p.read_text()
+          alvo = "  forceRelay = id != oldId || forceRelay;\n"
+          if s.count(alvo) != 1:
+              raise SystemExit("ERRO: connect() nao encontrado em flutter/lib/common.dart - atualize o patch 16.")
+          s = s.replace(alvo, alvo +
+              "  // MrDesk custom (item 29): nome do cliente vindo do catalogo de enderecos.\n"
+              "  if (!isDesktop || desktopType == DesktopType.main) {\n"
+              "    try {\n"
+              "      final mrdeskAb = gFFI.abModel.find(id);\n"
+              "      if (mrdeskAb != null &&\n"
+              "          mrdeskAb.username.isNotEmpty &&\n"
+              "          bind.mainGetPeerOptionSync(id: id, key: 'mrdesk-cliente') !=\n"
+              "              mrdeskAb.username) {\n"
+              "        await bind.mainSetPeerOption(\n"
+              "            id: id, key: 'mrdesk-cliente', value: mrdeskAb.username);\n"
+              "      }\n"
+              "    } catch (e) {\n"
+              "      debugPrint('MrDesk: sem nome do cliente no catalogo: $e');\n"
+              "    }\n"
+              "  }\n", 1)
+          p.write_text(s)
+          print("common.dart patched: nome do cliente do catalogo no acesso direto (item 29)")
+
+          # 17) (Item 24) MrDeskPro logado no catalogo nao conectava ("Failed to secure
+          #     tcp: deadline has elapsed"): com login (access_token) o cliente exige uma
+          #     troca de chaves com o hbbs antes de conectar, pra proteger o token, e o
+          #     hbbs de codigo aberto (1.1.15) nao responde. O token de login so serve ao
+          #     servidor Pro; o nosso hbbs ignora. Entao nao mandamos o token pro hbbs:
+          #     sem token nao ha a troca de chaves (src/client.rs).
+          p = pathlib.Path("src/client.rs")
+          s = p.read_text()
+          alvo = '            (peer, "", key, token)\n'
+          if s.count(alvo) != 1:
+              raise SystemExit("ERRO: token da conexao nao encontrado em src/client.rs - atualize o patch 17.")
+          s = s.replace(alvo, '            (peer, "", key, "") // MrDesk custom (patch 17): sem token pro hbbs\n', 1)
+          p.write_text(s)
+          print("client.rs patched: conexao sem token de login pro hbbs (item 24)")
+
+          def mrdesk_troca(s, alvo, novo, onde):
+              if s.count(alvo) != 1:
+                  raise SystemExit("ERRO: trecho nao encontrado (ou repetido) em " + onde + " - atualize o patch 18.")
+              return s.replace(alvo, novo, 1)
+
+
+          # 18) (Item 6B) Cinco senhas permanentes, uma por numero de acesso.
+          #     O servidor da Sysrs informa, na consulta do tecnico (patch 8) e na lista
+          #     guardada (patch 10), o numero do acesso (1 a 5) da conta de quem conecta.
+          #     O MrDesk confere SO a senha permanente daquele numero. A senha 1 e a
+          #     senha permanente normal do RustDesk; as senhas 2 a 5 ficam no
+          #     LocalConfig do servico ("mrdesk-senha-N" = salt|resumo cifrado), com o
+          #     mesmo salt da senha 1 (o MrDeskPro nao muda: manda o mesmo calculo).
+          #     Alterar senha: so durante um acesso remoto autorizado, e so a senha do
+          #     numero de quem esta conectado (dois numeros ao mesmo tempo: recusa).
+          #     Sem acesso remoto: recusa. Temporaria e "Aceitar" continuam valendo.
+          #     Depende dos patches 8 e 10 (roda depois deles).
+          p = pathlib.Path("src/server/connection.rs")
+          s = p.read_text()
+          onde = "src/server/connection.rs"
+
+          # a consulta devolve o numero do acesso
+          s = mrdesk_troca(s, r'''enum MrdeskPermissao {
+              Permitida,
+          ''', r'''enum MrdeskPermissao {
+              Permitida(u8), // numero do acesso (1 a 5) - patch 18
+          ''', onde)
+          s = mrdesk_troca(s, r'''                MrdeskPermissao::Permitida => {}
+          ''', r'''                MrdeskPermissao::Permitida(mrdesk_acesso) => {
+                              // patch 18: guarda o numero do acesso desta conexao
+                              MRDESK_ACESSOS.lock().unwrap().insert(self.inner.id, mrdesk_acesso);
+                          }
+          ''', onde)
+          s = mrdesk_troca(s, r'''    let mut resposta: Option<bool> = None;
+          ''', r'''    let mut resposta: Option<bool> = None;
+              let mut acesso_servidor: u8 = 1;
+          ''', onde)
+          s = mrdesk_troca(s, r'''        let body = json!({ "id": Config::get_id(), "peer": peer_id }).to_string();
+          ''', r'''        // "senhas": 5 avisa o servidor que este MrDesk conhece as cinco senhas (patch 18)
+                  let body = json!({ "id": Config::get_id(), "peer": peer_id, "senhas": 5 }).to_string();
+          ''', onde)
+          s = mrdesk_troca(s, r'''            resposta = serde_json::from_str::<Value>(&texto)
+                          .ok()
+                          .and_then(|v| v.get("autorizado").and_then(|a| a.as_bool()));
+          ''', r'''            let v = serde_json::from_str::<Value>(&texto).ok();
+                      resposta = v
+                          .as_ref()
+                          .and_then(|v| v.get("autorizado").and_then(|a| a.as_bool()));
+                      acesso_servidor = v
+                          .as_ref()
+                          .and_then(|v| v.get("acesso").and_then(|a| a.as_u64()))
+                          .filter(|a| (1..=5).contains(a))
+                          .unwrap_or(1) as u8;
+          ''', onde)
+          s = mrdesk_troca(s, r'''            if autorizado {
+                          MrdeskPermissao::Permitida
+                      } else {
+          ''', r'''            if autorizado {
+                          MrdeskPermissao::Permitida(acesso_servidor)
+                      } else {
+          ''', onde)
+          s = mrdesk_troca(s, r'''            if crate::hbbs_http::sync::mrdesk_tecnico_na_lista(peer_id) {
+                          log::info!("MrDesk: servidor sem resposta, tecnico {} autorizado pela lista guardada", peer_id);
+                          MrdeskPermissao::Permitida
+                      } else {
+          ''', r'''            if let Some(acesso_lista) = crate::hbbs_http::sync::mrdesk_tecnico_na_lista(peer_id) {
+                          log::info!("MrDesk: servidor sem resposta, tecnico {} autorizado pela lista guardada", peer_id);
+                          MrdeskPermissao::Permitida(acesso_lista)
+                      } else {
+          ''', onde)
+
+          # recusa: mostra ao tecnico o texto que o servidor mandar ("mensagem"), se vier.
+          # Assim regras novas do servidor (ex.: limite de acessos simultaneos da conta)
+          # tem aviso proprio sem precisar de outro build.
+          s = mrdesk_troca(s, r'''    Bloqueada,
+              Falha,
+          }
+          ''', r'''    Bloqueada(String), // texto do servidor pro tecnico (vazio = mensagem padrao) - patch 18
+              Falha,
+          }
+          ''', onde)
+          s = mrdesk_troca(s, r'''                MrdeskPermissao::Bloqueada => {
+          ''', r'''                MrdeskPermissao::Bloqueada(mrdesk_msg) => {
+          ''', onde)
+          s = mrdesk_troca(s, r'''                    self.send_login_error(MRDESK_MSG_BLOQUEADA).await;
+          ''', r'''                    self.send_login_error(if mrdesk_msg.is_empty() {
+                                  MRDESK_MSG_BLOQUEADA.to_owned()
+                              } else {
+                                  mrdesk_msg
+                              })
+                              .await;
+          ''', onde)
+          s = mrdesk_troca(s, r'''    let mut acesso_servidor: u8 = 1;
+          ''', r'''    let mut acesso_servidor: u8 = 1;
+              let mut mensagem_servidor = String::new();
+          ''', onde)
+          s = mrdesk_troca(s, r'''                .unwrap_or(1) as u8;
+          ''', r'''                .unwrap_or(1) as u8;
+                      mensagem_servidor = v
+                          .as_ref()
+                          .and_then(|v| v.get("mensagem").and_then(|m| m.as_str()))
+                          .map(|m| m.chars().take(200).collect::<String>())
+                          .unwrap_or_default();
+          ''', onde)
+          s = mrdesk_troca(s, r'''            } else {
+                          MrdeskPermissao::Bloqueada
+                      }
+          ''', r'''            } else {
+                          MrdeskPermissao::Bloqueada(mensagem_servidor)
+                      }
+          ''', onde)
+
+          # confere so a senha do numero do acesso
+          s = mrdesk_troca(s, r'''                self.check_update_temporary_password(true);
+                          return true;
+                      }
+                  }
+                  if password::permanent_enabled() || allow_permanent_password {
+          ''', r'''                self.check_update_temporary_password(true);
+                          return true;
+                      }
+                  }
+                  // MrDesk custom (patch 18): acessos 2 a 5 conferem so a senha do proprio numero
+                  let mrdesk_acesso = mrdesk_acesso_da_conexao(self.inner.id);
+                  if mrdesk_acesso >= 2 {
+                      if password::permanent_enabled() || allow_permanent_password {
+                          if let Some(h1) = mrdesk_senha_h1(mrdesk_acesso, &self.hash.salt) {
+                              if self.verify_h1(&h1[..]) {
+                                  self.set_conn_audit_primary_auth(ConnAuditPrimaryAuth::PermanentPassword);
+                                  return true;
+                              }
+                          }
+                      }
+                      return false;
+                  }
+                  if password::permanent_enabled() || allow_permanent_password {
+          ''', onde)
+
+          # conexao encerrada: esquece o numero do acesso
+          s = mrdesk_troca(s, r'''            let mut active_conns_lock = ALIVE_CONNS.lock().unwrap();
+                      active_conns_lock.retain(|&c| c != self.0);
+          ''', r'''            let mut active_conns_lock = ALIVE_CONNS.lock().unwrap();
+                      active_conns_lock.retain(|&c| c != self.0);
+                      super::MRDESK_ACESSOS.lock().unwrap().remove(&self.0); // patch 18
+          ''', onde)
+
+          s += r'''
+
+          // ================================================================
+          // MrDesk custom (item 6B, patch 18): cinco senhas permanentes, uma por numero
+          // de acesso (1 a 5). O numero vem do servidor da Sysrs na consulta do tecnico.
+          // Senha 1 = senha permanente normal. Senhas 2 a 5 = LocalConfig do servico,
+          // chave "mrdesk-senha-N", valor "salt|resumo cifrado" (resumo = o mesmo h1
+          // da senha permanente, calculado com o mesmo salt).
+          // ================================================================
+          lazy_static::lazy_static! {
+              // conexao -> numero do acesso informado na consulta do tecnico
+              static ref MRDESK_ACESSOS: Arc<Mutex<HashMap<i32, u8>>> = Default::default();
+          }
+
+          const MRDESK_SENHA_CHAVE: &str = "mrdesk-senha-";
+
+          fn mrdesk_acesso_da_conexao(conn_id: i32) -> u8 {
+              MRDESK_ACESSOS
+                  .lock()
+                  .unwrap()
+                  .get(&conn_id)
+                  .copied()
+                  .unwrap_or(1)
+          }
+
+          // Numero do acesso remoto em andamento, pra saber qual senha pode ser alterada:
+          // "1" a "5"; "" = nenhum acesso autorizado (ou sem numero conhecido); "x" =
+          // acessos de numeros diferentes ao mesmo tempo.
+          pub fn mrdesk_acesso_senha() -> String {
+              let ids: Vec<i32> = AUTHED_CONNS
+                  .lock()
+                  .unwrap()
+                  .iter()
+                  .map(|c| c.conn_id)
+                  .collect();
+              if ids.is_empty() {
+                  return String::new();
+              }
+              let acessos = MRDESK_ACESSOS.lock().unwrap();
+              let mut nums: Vec<u8> = Vec::new();
+              for id in ids.iter() {
+                  match acessos.get(id) {
+                      Some(n) => nums.push(*n),
+                      None => return String::new(),
+                  }
+              }
+              nums.sort();
+              nums.dedup();
+              if nums.len() == 1 {
+                  nums[0].to_string()
+              } else {
+                  "x".to_owned()
+              }
+          }
+
+          fn mrdesk_senha_h1(acesso: u8, salt: &str) -> Option<Vec<u8>> {
+              let salvo = hbb_common::config::LocalConfig::get_option(&format!(
+                  "{}{}",
+                  MRDESK_SENHA_CHAVE, acesso
+              ));
+              let (salt_salvo, cifrado) = salvo.split_once('|')?;
+              // o MrDeskPro calcula com o salt que recebeu nesta conexao: tem de ser o mesmo
+              if salt_salvo.is_empty() || salt_salvo != salt {
+                  return None;
+              }
+              let (hexa, ok, _) = hbb_common::password_security::decrypt_str_or_original(cifrado, "00");
+              if !ok || hexa.len() != 64 {
+                  return None;
+              }
+              let mut h1 = Vec::with_capacity(32);
+              for i in (0..64).step_by(2) {
+                  h1.push(u8::from_str_radix(hexa.get(i..i + 2)?, 16).ok()?);
+              }
+              Some(h1)
+          }
+
+          // A senha do acesso em andamento esta definida? (usado pela tela)
+          pub fn mrdesk_tem_senha() -> bool {
+              match mrdesk_acesso_senha().parse::<u8>() {
+                  Ok(n) if n >= 2 => {
+                      mrdesk_senha_h1(n, &Config::get_effective_permanent_password_salt()).is_some()
+                  }
+                  _ => Config::has_permanent_password(),
+              }
+          }
+
+          // Grava (ou apaga, se vazia) a senha permanente do acesso em andamento.
+          // Sem acesso remoto autorizado, ou com acessos de numeros diferentes: recusa.
+          pub fn mrdesk_definir_senha(senha: &str) -> bool {
+              let acesso = match mrdesk_acesso_senha().parse::<u8>() {
+                  Ok(n) if (1..=5).contains(&n) => n,
+                  _ => {
+                      log::warn!("MrDesk: alteracao da senha permanente recusada (sem acesso remoto de um unico numero)");
+                      return false;
+                  }
+              };
+              if acesso == 1 {
+                  return Config::set_permanent_password(senha);
+              }
+              let chave = format!("{}{}", MRDESK_SENHA_CHAVE, acesso);
+              if senha.is_empty() {
+                  hbb_common::config::LocalConfig::set_option(chave, String::new());
+                  log::info!("MrDesk: senha permanente {} removida", acesso);
+                  return true;
+              }
+              let salt = Config::get_effective_permanent_password_salt();
+              if salt.is_empty() {
+                  return false;
+              }
+              let h1 = hbb_common::config::compute_permanent_password_h1(senha, &salt);
+              let hexa: String = h1.iter().map(|b| format!("{:02x}", b)).collect();
+              let cifrado = hbb_common::password_security::encrypt_str_or_original(&hexa, "00", 128);
+              if cifrado.is_empty() || cifrado == hexa {
+                  log::warn!("MrDesk: nao foi possivel cifrar a senha permanente {}", acesso);
+                  return false;
+              }
+              hbb_common::config::LocalConfig::set_option(chave, format!("{}|{}", salt, cifrado));
+              log::info!("MrDesk: senha permanente {} definida", acesso);
+              true
+          }
+          '''
+          p.write_text(s)
+
+          # lista guardada: os codigos passam a levar o numero do acesso
+          p = pathlib.Path("src/hbbs_http/sync.rs")
+          s = p.read_text()
+          onde = "src/hbbs_http/sync.rs"
+          s = mrdesk_troca(s, r'''    let body = json!({ "id": Config::get_id() }).to_string();
+          ''', r'''    // "senhas": 5 = lista no formato novo, com o numero do acesso (patch 18)
+              let body = json!({ "id": Config::get_id(), "senhas": 5 }).to_string();
+          ''', onde)
+          i = s.find("pub fn mrdesk_tecnico_na_lista(peer_id: &str) -> bool {")
+          fim = "    lista.iter().any(|x| x == &codigo)\n}\n"
+          j = s.find(fim, i)
+          if i < 0 or j < 0:
+              raise SystemExit("ERRO: mrdesk_tecnico_na_lista nao encontrada em src/hbbs_http/sync.rs - atualize o patch 18.")
+          s = s[:i] + r'''// Devolve o numero do acesso (1 a 5) se o tecnico esta na lista guardada.
+          // Formato novo: SHA-256 de "<ID deste MrDesk>:<ID do MrDeskPro>:<numero>".
+          // Lista baixada antes da 1.4.11 (sem o numero): so existia o acesso 1.
+          pub fn mrdesk_tecnico_na_lista(peer_id: &str) -> Option<u8> {
+              use sha2::{Digest, Sha256};
+              let (ts, lista) = mrdesk_lista_salva();
+              if ts == 0 || mrdesk_agora().saturating_sub(ts) >= MRDESK_LISTA_VALIDADE {
+                  return None;
+              }
+              let codigo = |texto: String| -> String {
+                  let mut h = Sha256::new();
+                  h.update(texto.as_bytes());
+                  h.finalize().iter().map(|b| format!("{:02x}", b)).collect()
+              };
+              for n in 1..=5u8 {
+                  let c = codigo(format!("{}:{}:{}", Config::get_id(), peer_id, n));
+                  if lista.iter().any(|x| x == &c) {
+                      return Some(n);
+                  }
+              }
+              let c = codigo(format!("{}:{}", Config::get_id(), peer_id));
+              if lista.iter().any(|x| x == &c) {
+                  return Some(1);
+              }
+              None
+          }
+          ''' + s[j + len(fim):]
+          p.write_text(s)
+
+          # servico: alterar/consultar a senha passa pelas funcoes do patch
+          p = pathlib.Path("src/ipc.rs")
+          s = p.read_text()
+          onde = "src/ipc.rs"
+          s = mrdesk_troca(s, r'''                        updated = Config::set_permanent_password(&value);
+          ''', r'''                        // MrDesk custom (patch 18): so a senha do acesso remoto em andamento
+                                  updated = crate::server::mrdesk_definir_senha(&value);
+          ''', onde)
+          s = mrdesk_troca(s, r'''                } else if name == "permanent-password-set" {
+                              value = Some(if Config::has_permanent_password() {
+          ''', r'''                } else if name == "mrdesk-senha-acesso" {
+                              // MrDesk custom (patch 18): numero da senha que pode ser alterada agora
+                              value = Some(crate::server::mrdesk_acesso_senha());
+                          } else if name == "permanent-password-set" {
+                              value = Some(if crate::server::mrdesk_tem_senha() {
+          ''', onde)
+          p.write_text(s)
+
+          p = pathlib.Path("src/flutter_ffi.rs")
+          s = p.read_text()
+          s = mrdesk_troca(s, r'''    } else if key == "permanent-password-set" {
+                  return ui_interface::is_permanent_password_set().to_string();
+          ''', r'''    } else if key == "mrdesk-senha-acesso" {
+                  // MrDesk custom (patch 18): numero da senha permanente que pode ser alterada agora
+                  return crate::ipc::get_config("mrdesk-senha-acesso")
+                      .ok()
+                      .flatten()
+                      .unwrap_or_default();
+              } else if key == "permanent-password-set" {
+                  return ui_interface::is_permanent_password_set().to_string();
+          ''', "src/flutter_ffi.rs")
+          p.write_text(s)
+
+          # tela "Definir senha": mostra qual senha (1 a 5) esta sendo alterada
+          p = pathlib.Path("flutter/lib/desktop/pages/desktop_home_page.dart")
+          s = p.read_text()
+          onde = "flutter/lib/desktop/pages/desktop_home_page.dart"
+          s = mrdesk_troca(s, r'''  final localPasswordSet =
+                (await bind.mainGetCommon(key: "local-permanent-password-set")) == "true";
+            final permanentPasswordSet =
+                (await bind.mainGetCommon(key: "permanent-password-set")) == "true";
+          ''', r'''  // MrDesk custom (patch 18): a senha so muda durante um acesso remoto, e so a
+            // do numero do acesso conectado (1 a 5), que aparece no titulo e no campo.
+            final mrdeskAcesso = (await bind.mainGetCommon(key: "mrdesk-senha-acesso")).trim();
+            if (!["1", "2", "3", "4", "5"].contains(mrdeskAcesso)) {
+              showToast(
+                  mrdeskAcesso == "x"
+                      ? "H\u00e1 acessos remotos de contas diferentes ao mesmo tempo: a senha n\u00e3o pode ser alterada agora."
+                      : "A senha permanente s\u00f3 pode ser alterada durante um acesso remoto do t\u00e9cnico.",
+                  timeout: const Duration(seconds: 6));
+              return;
+            }
+            final permanentPasswordSet =
+                (await bind.mainGetCommon(key: "permanent-password-set")) == "true";
+            final localPasswordSet = mrdeskAcesso == "1"
+                ? (await bind.mainGetCommon(key: "local-permanent-password-set")) == "true"
+                : permanentPasswordSet;
+          ''', onde)
+          s = mrdesk_troca(s, r'''          Text(translate("Set Password")).paddingOnly(left: 10),
+          ''', r'''          Text('${translate("Set Password")} $mrdeskAcesso').paddingOnly(left: 10),
+          ''', onde)
+          s = mrdesk_troca(s, r'''                        labelText: translate('Password'),
+                                  errorText: errMsg0.isNotEmpty ? errMsg0 : null),
+          ''', r'''                        labelText: '${translate('Password')} $mrdeskAcesso',
+                                  errorText: errMsg0.isNotEmpty ? errMsg0 : null),
+          ''', onde)
+          p.write_text(s)
+          print("connection.rs/sync.rs/ipc.rs/flutter patched: cinco senhas permanentes por numero de acesso (item 6B)")
+
+          # 19) (Item 41) Link "Esqueci minha senha" na tela de login do MrDeskPro: abre
+          #     o navegador na pagina do painel que envia o link de senha por e-mail.
+          p = pathlib.Path("flutter/lib/common/widgets/login.dart")
+          s = p.read_text()
+          s = mrdesk_troca(s, r'''                              : null,
+                              )),
+                        ),
+                      ])),
+                    ],
+                  ));
+          ''', r'''                              : null,
+                              )),
+                        ),
+                      ])),
+                      // MrDesk custom (patch 19): esqueci minha senha
+                      TextButton(
+                        onPressed: () => launchUrl(
+                            Uri.parse('https://mrdesk.sysrs.com.br/?esqueci=1')),
+                        child: Text('Esqueci minha senha'),
+                      ).marginOnly(top: 6),
+                    ],
+                  ));
+          ''', "flutter/lib/common/widgets/login.dart")
+          p.write_text(s)
+          print("login.dart patched: link Esqueci minha senha (item 41)")
+
+          # 9) Versao propria do MrDesk (decisao do Celso em 30/09/2026). Melhoria nossa
+          #    sem versao nova do RustDesk nao chegava aos clientes pela atualizacao
+          #    automatica (versao igual). A cada build que deva ser distribuido, aumentar
+          #    o ULTIMO numero de MRDESK_VERSAO (1.4.10, 1.4.11, ...). Vai pro exe
+          #    (ProductVersion, que o servidor le), pro crate::VERSION (que o cliente
+          #    compara) e pro Flutter. Ao trocar a versao do RustDesk, conferir BASE.
+          MRDESK_BASE = "1.4.9"
+          MRDESK_VERSAO = "1.4.12"
+          import re
+          p = pathlib.Path("Cargo.toml")
+          s = p.read_text()
+          if not re.search(r'^version = "' + re.escape(MRDESK_BASE) + '"$', s, re.M):
+              raise SystemExit(
+                  "ERRO: versao do RustDesk diferente de " + MRDESK_BASE + " - atualize "
+                  "MRDESK_BASE e MRDESK_VERSAO (patch 9) em generator-windows.yml."
+              )
+          s = re.sub(r'^version = "' + re.escape(MRDESK_BASE) + '"$', 'version = "' + MRDESK_VERSAO + '"', s, count=1, flags=re.M)
+          p.write_text(s)
+          p = pathlib.Path("libs/portable/Cargo.toml")
+          s = p.read_text()
+          s, n = re.subn(r'^version = "' + re.escape(MRDESK_BASE) + '"$', 'version = "' + MRDESK_VERSAO + '"', s, count=1, flags=re.M)
+          if n != 1:
+              raise SystemExit("ERRO: versao nao encontrada em libs/portable/Cargo.toml (patch 9).")
+          p.write_text(s)
+          p = pathlib.Path("Cargo.lock")
+          s = p.read_text()
+          for pacote in ("rustdesk", "rustdesk-portable-packer"):
+              antes = 'name = "' + pacote + '"\nversion = "' + MRDESK_BASE + '"'
+              if s.count(antes) != 1:
+                  raise SystemExit("ERRO: pacote " + pacote + " " + MRDESK_BASE + " nao encontrado no Cargo.lock (patch 9).")
+              s = s.replace(antes, 'name = "' + pacote + '"\nversion = "' + MRDESK_VERSAO + '"', 1)
+          p.write_text(s)
+          p = pathlib.Path("flutter/pubspec.yaml")
+          s = p.read_text()
+          s, n = re.subn(r'^version: ' + re.escape(MRDESK_BASE) + r'\+', 'version: ' + MRDESK_VERSAO + '+', s, count=1, flags=re.M)
+          if n != 1:
+              raise SystemExit("ERRO: versao nao encontrada em flutter/pubspec.yaml (patch 9).")
+          p.write_text(s)
+          print("versao propria do MrDesk: " + MRDESK_VERSAO + " (RustDesk " + MRDESK_BASE + ")")
+          PYEOF
+
+          echo "Patches de update aplicados: URL + checagem manual (common.rs) + checagem automatica diaria (updater.rs) + card visivel no Flutter (desktop_home_page.dart) + checagem na interface (common.dart) + foco do teclado ao voltar pra janela (remote_page.dart) + tempo sem uso no heartbeat (sync.rs) + tecnicos autorizados (connection.rs) + lista guardada (sync.rs) + card cliente/apelido (peer_card.dart) + aba com nome do cliente + ref da auditoria + log da senha lembrada + versao propria (Cargo/pubspec)"
 
       - name: change appname to custom
         if: env.appname != 'rustdesk'
@@ -374,76 +1710,6 @@ jobs:
         run: | 
           sed -i -e 's|{software_update_url ? <UpdateMe /> : ""}||' ./src/ui/index.tis
           sed -i '/let (request, url) =/,/Ok(())/{/Ok(())/!d}' ./src/common.rs
-
-      - name: patch windows.rs - installer on Windows 7 with accented user name (MrDesk custom)
-        shell: bash
-        run: |
-          python3 - <<'PYEOF'
-          # MrDesk custom (06/10/2026). No Windows 7, o instalador falhava sem
-          # mensagem ("install failed") quando o usuario do Windows tem acento no
-          # nome (caso real: "MDE RECEP\u00c7\u00c3O"). O instalador grava um .bat em UTF-8
-          # (chcp 65001) com os caminhos da pasta do usuario; o cmd do Windows 7
-          # se perde com letra acentuada nesse modo e o .bat para no meio - nem a
-          # pasta em Arquivos de Programas e criada. Conserto: antes de gravar o
-          # .bat, trocar a pasta do usuario pelo nome curto dela (8.3, so ASCII,
-          # ex.: C:\Users\MDEREC~1), que e o que foi feito a mao naquela maquina.
-          # Se o nome ja e ASCII, ou o Windows nao tem nome curto, nada muda.
-          import pathlib
-          p = pathlib.Path("src/platform/windows.rs")
-          s = p.read_text(encoding="utf-8")
-
-          def erro(o_que):
-              raise SystemExit(
-                  "ERRO: " + o_que + " nao encontrado em src/platform/windows.rs (patch do instalador, x86) - "
-                  "o RustDesk oficial pode ter mudado. Atualize o patch em generator-windows-x86.yml."
-              )
-
-          fn_marker = "fn write_cmds(cmds: String, ext: &str, tip: &str) -> ResultType<std::path::PathBuf> {"
-          fn_idx = s.find(fn_marker)
-          if fn_idx == -1:
-              erro("funcao write_cmds")
-          alvo = "    // in case cmds mixed with \\r\\n and \\n, make sure all ending with \\r\\n\n"
-          i = s.find(alvo, fn_idx)
-          if i == -1 or i - fn_idx > 1500:
-              erro("comentario 'in case cmds mixed' em write_cmds")
-          s = s[:i] + (
-              "    if ext == \"bat\" {\n"
-              "        cmds = mrdesk_caminho_curto_do_perfil(cmds);\n"
-              "    }\n"
-          ) + s[i:]
-
-          funcao = r"""
-          // MrDesk custom: troca a pasta do usuario pelo nome curto (8.3) nos
-          // comandos do instalador, quando ela tem caractere fora do ASCII.
-          fn mrdesk_caminho_curto_do_perfil(cmds: String) -> String {
-              #[link(name = "kernel32")]
-              extern "system" {
-                  fn GetShortPathNameW(longo: *const u16, curto: *mut u16, tamanho: u32) -> u32;
-              }
-              let perfil = match std::env::var("USERPROFILE") {
-                  Ok(p) if !p.is_empty() && !p.is_ascii() => p,
-                  _ => return cmds,
-              };
-              let longo: Vec<u16> = perfil.encode_utf16().chain(std::iter::once(0)).collect();
-              let mut curto = vec![0u16; 1024];
-              let n = unsafe { GetShortPathNameW(longo.as_ptr(), curto.as_mut_ptr(), curto.len() as u32) }
-                  as usize;
-              if n == 0 || n >= curto.len() {
-                  return cmds;
-              }
-              let curto = String::from_utf16_lossy(&curto[..n]);
-              if !curto.is_ascii() || curto == perfil {
-                  return cmds;
-              }
-              cmds.replace(&perfil, &curto)
-          }
-
-          """
-          import textwrap
-          s = s[:fn_idx] + textwrap.dedent(funcao).lstrip("\n") + s[fn_idx:]
-          p.write_text(s, encoding="utf-8")
-          print("windows.rs patched: instalador usa o nome curto da pasta do usuario (Windows 7 com acento)")
-          PYEOF
 
       - name: Build rustdesk
         id: build
