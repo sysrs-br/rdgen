@@ -321,6 +321,76 @@ jobs:
           print("windows.rs patched: reinicio do servico em caso de falha e inicio atrasado mantido (patch 20)")
           PYEOF
 
+      - name: patch windows.rs - installer on Windows 7 with accented user name (MrDesk custom, patch 21)
+        shell: bash
+        run: |
+          python3 - <<'PYEOF'
+          # Patch 21 (06/10/2026; o mesmo do gerador de 32 bits). No Windows 7, o instalador falhava sem
+          # mensagem ("install failed") quando o usuario do Windows tem acento no
+          # nome (caso real: "MDE RECEP\u00c7\u00c3O"). O instalador grava um .bat em UTF-8
+          # (chcp 65001) com os caminhos da pasta do usuario; o cmd do Windows 7
+          # se perde com letra acentuada nesse modo e o .bat para no meio - nem a
+          # pasta em Arquivos de Programas e criada. Conserto: antes de gravar o
+          # .bat, trocar a pasta do usuario pelo nome curto dela (8.3, so ASCII,
+          # ex.: C:\Users\MDEREC~1), que e o que foi feito a mao naquela maquina.
+          # Se o nome ja e ASCII, ou o Windows nao tem nome curto, nada muda.
+          import pathlib
+          p = pathlib.Path("src/platform/windows.rs")
+          s = p.read_text(encoding="utf-8")
+
+          def erro(o_que):
+              raise SystemExit(
+                  "ERRO: " + o_que + " nao encontrado em src/platform/windows.rs (patch 21, instalador) - "
+                  "o RustDesk oficial pode ter mudado. Atualize o patch em generator-windows.yml."
+              )
+
+          fn_marker = "fn write_cmds(cmds: String, ext: &str, tip: &str) -> ResultType<std::path::PathBuf> {"
+          fn_idx = s.find(fn_marker)
+          if fn_idx == -1:
+              erro("funcao write_cmds")
+          alvo = "    // in case cmds mixed with \\r\\n and \\n, make sure all ending with \\r\\n\n"
+          i = s.find(alvo, fn_idx)
+          if i == -1 or i - fn_idx > 1500:
+              erro("comentario 'in case cmds mixed' em write_cmds")
+          s = s[:i] + (
+              "    if ext == \"bat\" {\n"
+              "        cmds = mrdesk_caminho_curto_do_perfil(cmds);\n"
+              "    }\n"
+          ) + s[i:]
+
+          funcao = r"""
+          // MrDesk custom: troca a pasta do usuario pelo nome curto (8.3) nos
+          // comandos do instalador, quando ela tem caractere fora do ASCII.
+          fn mrdesk_caminho_curto_do_perfil(cmds: String) -> String {
+              #[link(name = "kernel32")]
+              extern "system" {
+                  fn GetShortPathNameW(longo: *const u16, curto: *mut u16, tamanho: u32) -> u32;
+              }
+              let perfil = match std::env::var("USERPROFILE") {
+                  Ok(p) if !p.is_empty() && !p.is_ascii() => p,
+                  _ => return cmds,
+              };
+              let longo: Vec<u16> = perfil.encode_utf16().chain(std::iter::once(0)).collect();
+              let mut curto = vec![0u16; 1024];
+              let n = unsafe { GetShortPathNameW(longo.as_ptr(), curto.as_mut_ptr(), curto.len() as u32) }
+                  as usize;
+              if n == 0 || n >= curto.len() {
+                  return cmds;
+              }
+              let curto = String::from_utf16_lossy(&curto[..n]);
+              if !curto.is_ascii() || curto == perfil {
+                  return cmds;
+              }
+              cmds.replace(&perfil, &curto)
+          }
+
+          """
+          import textwrap
+          s = s[:fn_idx] + textwrap.dedent(funcao).lstrip("\n") + s[fn_idx:]
+          p.write_text(s, encoding="utf-8")
+          print("windows.rs patched: instalador usa o nome curto da pasta do usuario (Windows 7 com acento)")
+          PYEOF
+
       - name: patch ui_cm_interface.rs to allow Elevate even when installed as service (MrDesk custom - TESTE)
         shell: bash
         run: |
