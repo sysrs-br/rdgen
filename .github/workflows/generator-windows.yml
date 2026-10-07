@@ -391,6 +391,64 @@ jobs:
           print("windows.rs patched: instalador usa o nome curto da pasta do usuario (Windows 7 com acento)")
           PYEOF
 
+      - name: patch tray.rs - refresh shortcut icons after update (MRDesk custom, patch 22)
+        shell: bash
+        run: |
+          python3 - <<'PYEOF'
+          # Patch 22 (07/10/2026, pedido do Celso). Depois de atualizar, os atalhos
+          # (pesquisa do Windows, barra de tarefas, area de trabalho) continuavam
+          # mostrando o icone antigo: o Windows guarda uma copia da imagem de cada
+          # atalho e nao refaz quando o programa muda de icone. O processo da
+          # bandeja (--tray) roda na sessao do usuario e e reiniciado em toda
+          # atualizacao/instalacao: ao iniciar, se a versao mudou desde a ultima
+          # vez, avisa o Windows pra refazer as imagens (SHChangeNotify com
+          # SHCNE_ASSOCCHANGED, o mesmo que os instaladores fazem). Uma vez por
+          # build (guarda versao + data do build em LocalConfig "mrdesk-icones-versao").
+          import pathlib
+          p = pathlib.Path("src/tray.rs")
+          s = p.read_text()
+
+          def erro(o_que):
+              raise SystemExit(
+                  "ERRO: " + o_que + " nao encontrado em src/tray.rs (patch 22) - "
+                  "o RustDesk oficial pode ter mudado. Atualize o patch em generator-windows.yml."
+              )
+
+          alvo = "pub fn start_tray() {\n"
+          if s.count(alvo) != 1:
+              erro("funcao start_tray")
+          s = s.replace(alvo, alvo + "    #[cfg(windows)]\n    mrdesk_atualizar_icones(); // MRDesk custom (patch 22)\n", 1)
+          s += r"""
+          // MRDesk custom (patch 22): pede ao Windows pra refazer as imagens dos
+          // atalhos quando a versao do programa mudou (icone novo apos atualizar).
+          #[cfg(windows)]
+          fn mrdesk_atualizar_icones() {
+              const CHAVE: &str = "mrdesk-icones-versao";
+              // versao + data do build: um build refeito com a mesma versao (icone
+              // trocado) tambem atualiza
+              let atual = format!("{} {}", crate::VERSION, crate::BUILD_DATE);
+              if hbb_common::config::LocalConfig::get_option(CHAVE) == atual {
+                  return;
+              }
+              #[link(name = "shell32")]
+              extern "system" {
+                  fn SHChangeNotify(
+                      evento: i32,
+                      flags: u32,
+                      item1: *const std::ffi::c_void,
+                      item2: *const std::ffi::c_void,
+                  );
+              }
+              // SHCNE_ASSOCCHANGED = 0x08000000, SHCNF_IDLIST = 0
+              unsafe { SHChangeNotify(0x0800_0000, 0, std::ptr::null(), std::ptr::null()) };
+              hbb_common::config::LocalConfig::set_option(CHAVE.to_owned(), atual.clone());
+              log::info!("MRDesk: icones dos atalhos atualizados no Windows (build {})", atual);
+          }
+          """.replace("\n          ", "\n")
+          p.write_text(s)
+          print("tray.rs patched: icones dos atalhos atualizados apos mudar de versao (patch 22)")
+          PYEOF
+
       - name: patch ui_cm_interface.rs to allow Elevate even when installed as service (MRDesk custom - TESTE)
         shell: bash
         run: |
