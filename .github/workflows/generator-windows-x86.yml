@@ -1524,6 +1524,118 @@ jobs:
 
           echo "Patches de update aplicados: URL + checagem manual (common.rs) + checagem automatica diaria (updater.rs) + card visivel no Flutter (desktop_home_page.dart) + checagem na interface (common.dart) + foco do teclado ao voltar pra janela (remote_page.dart) + tempo sem uso no heartbeat (sync.rs) + tecnicos autorizados (connection.rs) + lista guardada (sync.rs) + card cliente/apelido (peer_card.dart) + aba com nome do cliente + ref da auditoria + log da senha lembrada + versao propria (Cargo/pubspec)"
 
+      - name: patch tabs - highlighted current tab and client name kept on reconnect (MRDesk custom, patches 23 and 24)
+        shell: bash
+        run: |
+          python3 - <<'PYEOF'
+          # Patches 23 e 24 (07/10/2026, pedidos do Celso) - guias do MRDeskPro.
+          # 23) Com varias conexoes na mesma janela, a guia atual so tinha um risco
+          #     azul embaixo e o icone um pouco mais forte - discreto demais. Agora a
+          #     guia atual das janelas de acesso (tela remota, arquivos, camera,
+          #     terminal, redirecionamento) fica com fundo azul da marca (#0066b3) e
+          #     texto (negrito), icone, X e escudo de conexao segura brancos. A janela principal e a do lado
+          #     atendido (cm) nao mudam.
+          # 24) Depois de uma queda e reconexao a guia voltou a mostrar ID@computador
+          #     em vez do nome do cliente: getDesktopTabLabel rele o arquivo do ID a
+          #     cada redesenho da barra e, na reconexao, o arquivo pode vir sem a opcao
+          #     'mrdesk-cliente'. Agora o nome lido fica guardado em memoria (por ID,
+          #     no processo da janela) e e usado quando a leitura vier sem ele. Nao
+          #     regrava o arquivo: o proximo acesso (painel ou catalogo) ja regrava.
+          import pathlib
+
+          def troca(s, alvo, novo, o_que):
+              if s.count(alvo) != 1:
+                  raise SystemExit("ERRO: " + o_que + " nao encontrado (" + str(s.count(alvo)) + "x) - atualize o patch 23/24.")
+              return s.replace(alvo, novo, 1)
+
+          # ---- 23: guia atual destacada ----
+          p = pathlib.Path("flutter/lib/desktop/widgets/tabbar_widget.dart")
+          s = p.read_text()
+          s = troca(s,
+              "  final RestorableBool restoreHover = RestorableBool(false);\n\n  Widget _buildTabContent() {\n",
+              "  final RestorableBool restoreHover = RestorableBool(false);\n\n"
+              "  // MRDesk custom (patch 23): guia atual destacada nas janelas de acesso.\n"
+              "  static const Color _mrdeskCorDaGuiaAtual = Color(0xFF0066B3);\n"
+              "  bool get _mrdeskDestaque =>\n"
+              "      widget.index == widget.selected &&\n"
+              "      widget.tabType != DesktopTabType.main &&\n"
+              "      widget.tabType != DesktopTabType.cm &&\n"
+              "      widget.tabType != DesktopTabType.install;\n\n"
+              "  Widget _buildTabContent() {\n",
+              "_TabState em tabbar_widget.dart")
+          s = troca(s,
+              "          color: isSelected\n              ? MyTheme.tabbar(context).selectedTabIconColor\n              : MyTheme.tabbar(context).unSelectedTabIconColor,\n",
+              "          color: _mrdeskDestaque\n              ? Colors.white\n              : isSelected\n                  ? MyTheme.tabbar(context).selectedTabIconColor\n                  : MyTheme.tabbar(context).unSelectedTabIconColor,\n",
+              "cor do icone da guia")
+          s = troca(s,
+              "              style: TextStyle(\n                  color: isSelected\n                      ? MyTheme.tabbar(context).selectedTextColor\n                      : MyTheme.tabbar(context).unSelectedTextColor),\n",
+              "              style: TextStyle(\n                  fontWeight: _mrdeskDestaque ? FontWeight.w600 : null,\n                  color: _mrdeskDestaque\n                      ? Colors.white\n                      : isSelected\n                          ? MyTheme.tabbar(context).selectedTextColor\n                          : MyTheme.tabbar(context).unSelectedTextColor),\n",
+              "cor do texto da guia")
+          s = troca(s,
+              "              color: isSelected\n                  ? widget.selectedTabBackgroundColor\n                  : widget.unSelectedTabBackgroundColor,\n",
+              "              color: _mrdeskDestaque\n                  ? _mrdeskCorDaGuiaAtual\n                  : isSelected\n                      ? widget.selectedTabBackgroundColor\n                      : widget.unSelectedTabBackgroundColor,\n",
+              "fundo da guia")
+          s = troca(s,
+              "                                  tabSelected: isSelected,\n                                  onClose: () => widget.onClose(),\n",
+              "                                  tabSelected: isSelected,\n                                  mrdeskDestaque: _mrdeskDestaque,\n                                  onClose: () => widget.onClose(),\n",
+              "chamada do botao de fechar da guia")
+          s = troca(s,
+              "  final bool tabSelected;\n  final Function onClose;\n\n  const _CloseButton({\n    Key? key,\n    required this.visible,\n    required this.tabSelected,\n",
+              "  final bool tabSelected;\n  final bool mrdeskDestaque;\n  final Function onClose;\n\n  const _CloseButton({\n    Key? key,\n    required this.visible,\n    required this.tabSelected,\n    this.mrdeskDestaque = false,\n",
+              "classe do botao de fechar da guia")
+          s = troca(s,
+              "                    color: tabSelected\n                        ? MyTheme.tabbar(context).selectedIconColor\n                        : MyTheme.tabbar(context).unSelectedIconColor,\n",
+              "                    color: mrdeskDestaque\n                        ? Colors.white\n                        : tabSelected\n                            ? MyTheme.tabbar(context).selectedIconColor\n                            : MyTheme.tabbar(context).unSelectedIconColor,\n",
+              "cor do botao de fechar da guia")
+          p.write_text(s)
+          print("tabbar_widget.dart patched: guia atual com fundo azul (patch 23)")
+
+          # ---- 23 (cont.): escudo de conexao segura branco na guia atual ----
+          # O escudo verde (#3F7D46) some sobre o azul; na guia atual, quando a conexao
+          # e segura, fica branco. O escudo vermelho (conexao nao segura) nao muda.
+          p = pathlib.Path("flutter/lib/desktop/pages/remote_tab_page.dart")
+          s = p.read_text()
+          s = troca(s,
+              "                  child: SvgPicture.asset(\n                    'assets/${connectionType.secure.value}${connectionType.direct.value}.svg',\n                    width: themeConf.iconSize,\n                    height: themeConf.iconSize,\n",
+              "                  child: SvgPicture.asset(\n                    'assets/${connectionType.secure.value}${connectionType.direct.value}.svg',\n                    width: themeConf.iconSize,\n                    height: themeConf.iconSize,\n"
+              "                    // MRDesk custom (patch 23): escudo branco na guia atual\n"
+              "                    colorFilter: secure &&\n"
+              "                            tabController.state.value.tabs\n"
+              "                                    .indexWhere((t) => t.key == key) ==\n"
+              "                                tabController.state.value.selected\n"
+              "                        ? svgColor(Colors.white)\n"
+              "                        : null,\n",
+              "escudo da conexao em remote_tab_page.dart")
+          p.write_text(s)
+          print("remote_tab_page.dart patched: escudo branco na guia atual (patch 23)")
+
+          # ---- 24: nome do cliente guardado em memoria ----
+          p = pathlib.Path("flutter/lib/common.dart")
+          s = p.read_text()
+          s = troca(s,
+              "    if (mrdeskCliente is String && mrdeskCliente.isNotEmpty) {\n      return mrdeskCliente;\n    }\n",
+              "    if (mrdeskCliente is String && mrdeskCliente.isNotEmpty) {\n      mrdeskClientesDasGuias[peerId] = mrdeskCliente;\n      return mrdeskCliente;\n    }\n",
+              "leitura do nome do cliente em getDesktopTabLabel (patch 12)")
+          s = troca(s,
+              "  String label = alias.isEmpty ? peerId : alias;\n  try {\n    String peer = bind.mainGetPeerSync(id: peerId);\n",
+              "  // MRDesk custom (patch 24): leitura veio sem o nome (reconexao) - usa o\n"
+              "  // ultimo nome lido nesta janela.\n"
+              "  final mrdeskGuardado = mrdeskClientesDasGuias[peerId];\n"
+              "  if (mrdeskGuardado != null && mrdeskGuardado.isNotEmpty) {\n"
+              "    return mrdeskGuardado;\n"
+              "  }\n"
+              "  String label = alias.isEmpty ? peerId : alias;\n  try {\n    String peer = bind.mainGetPeerSync(id: peerId);\n",
+              "rotulo padrao em getDesktopTabLabel")
+          s = troca(s,
+              "String getDesktopTabLabel(String peerId, String alias) {\n",
+              "// MRDesk custom (patch 24): nome do cliente de cada ID ja lido nesta janela.\n"
+              "final Map<String, String> mrdeskClientesDasGuias = {};\n\n"
+              "String getDesktopTabLabel(String peerId, String alias) {\n",
+              "getDesktopTabLabel")
+          p.write_text(s)
+          print("common.dart patched: nome do cliente guardado para a guia (patch 24)")
+          PYEOF
+
       - name: change appname to custom
         if: env.appname != 'rustdesk'
         continue-on-error: true
